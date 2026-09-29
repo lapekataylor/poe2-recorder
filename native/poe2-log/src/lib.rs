@@ -19,6 +19,10 @@
 //!
 //! The formats are unconfirmed against real PoE2 logs; see `area_kind` and
 //! the `*_PREFIX`/`*_SUFFIX` constants when they need adjusting.
+//!
+//! [`tracker`] turns the parsed events into map runs.
+
+pub mod tracker;
 
 const GENERATING_PREFIX: &str = "Generating level ";
 const AREA_INFIX: &str = " area \"";

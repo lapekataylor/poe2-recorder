@@ -5,14 +5,6 @@
     <file>style.css</file>
   </gresource>
   <gresource prefix="/io/github/lapekataylor/PoeRecorder/icons/scalable/actions">
-    <file alias="wr-category-2v2-symbolic.svg">assets/icons/wr-category-2v2-symbolic.svg</file>
-    <file alias="wr-category-3v3-symbolic.svg">assets/icons/wr-category-3v3-symbolic.svg</file>
-    <file alias="wr-category-5v5-symbolic.svg">assets/icons/wr-category-5v5-symbolic.svg</file>
-    <file alias="wr-category-skirmish-symbolic.svg">assets/icons/wr-category-skirmish-symbolic.svg</file>
-    <file alias="wr-category-solo-shuffle-symbolic.svg">assets/icons/wr-category-solo-shuffle-symbolic.svg</file>
-    <file alias="wr-category-mythic-plus-symbolic.svg">assets/icons/wr-category-mythic-plus-symbolic.svg</file>
-    <file alias="wr-category-raids-symbolic.svg">assets/icons/wr-category-raids-symbolic.svg</file>
-    <file alias="wr-category-battlegrounds-symbolic.svg">assets/icons/wr-category-battlegrounds-symbolic.svg</file>
     <file alias="wr-category-manual-symbolic.svg">assets/icons/wr-category-manual-symbolic.svg</file>
     <file alias="wr-category-clips-symbolic.svg">assets/icons/wr-category-clips-symbolic.svg</file>
   </gresource>
@@ -21,6 +13,5 @@
   </gresource>
   <gresource prefix="/io/github/lapekataylor/PoeRecorder/licenses">
     <file alias="lucide-ISC.txt">assets/icons/LUCIDE-LICENSE</file>
-    <file alias="fontawesome-CC-BY-4.0.txt">assets/icons/FONTAWESOME-LICENSE.txt</file>
   </gresource>
 </gresources>

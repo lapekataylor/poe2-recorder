@@ -2,8 +2,8 @@
 
 //! Coordinator-owned application state and commands.
 //!
-//! One thread owns `Config`, the log tailers, the activity engine, the
-//! `Recorder`, the library index, and the in-flight recording draft. The GTK
+//! One thread owns `Config`, the Path of Exile 2 log source, the `Recorder`,
+//! the library index, and the in-flight recording draft. The GTK
 //! thread holds a `CoordinatorHandle`: one bounded command sender, one
 //! capacity-one snapshot receiver, and one capacity-one stopped receiver. A
 //! second thread runs the serial `MediaWorker`; the coordinator owns its join
@@ -11,10 +11,8 @@
 //! always precedes queued user transcodes.
 //!
 //! Notes:
-//! - Advanced-combat-logging status is read from `<log dir>/../WTF/Config.wtf`
-//!   when the tailers are (re)opened; it refreshes on arm/save.
-//! - Test recordings synthesize the minimum parsed events for the chosen
-//!   category. `ForceEnd` stops a running test.
+//! - Test recordings are a short simulated map run with one death marker.
+//!   `ForceEnd` stops a running test.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -23,16 +21,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::activity::{ActivityAction, ActivityEngine, RecordingDraft};
 use crate::config::{Config, ConfigError, LayoutSettings, ValidationProblem};
 use crate::domain::{
-    ActivityDetails, Category, CorrelatedActivity, DeathMarkerVisibility, GameFlavor, LibraryEntry,
-    MarkerVisibility, MediaFacts, MeterData, Outcome, Problem, RecorderStatus, RecordingId,
-    RecoveryAction, StorageLimit, WorkKind, WorkProgress,
+    ActivityDetails, Category, DeathMarkerVisibility, GameFlavor, LibraryEntry, MediaFacts,
+    Outcome, PlayerSummary, Problem, RecorderStatus, RecordingDraft, RecordingId, RecoveryAction,
+    StorageLimit, TimelineItem, TimelineKind, WorkKind, WorkProgress,
 };
-use crate::logwatch::LogTailer;
 use crate::media_jobs::{MediaConfig, MediaControl, MediaEvent, MediaJob, MediaWorker};
-use crate::parser::{CombatEvent, ParseTimeContext, ParsedEvent, PlayerObservationKind};
 use crate::poe2::{Poe2Action, Poe2Source};
 use crate::recorder::{
     CaptureArtifacts, CaptureConfig, Recorder, RecorderError, RecorderEvent, RecordingMode,
@@ -41,11 +36,7 @@ use crate::recorder::{
 use crate::storage::{EntryUpdate, LibraryIndex, Storage, now_unix_ms};
 
 /// Force-end an automatic recording after this long without new log data: a
-/// crash/alt-F4 safety net only. WoW flushes the combat log in bursts, so the
-/// window must sit well above that cadence or a live activity gets force-ended
-/// inside a flush gap and discarded before its player is identified.
-const RETAIL_DATA_TIMEOUT_MS: i64 = 10 * 60_000;
-const CLASSIC_DATA_TIMEOUT_MS: i64 = 2 * 60_000;
+/// crash or closed-game safety net only.
 const POE2_DATA_TIMEOUT_MS: i64 = crate::poe2::QUIET_LOG_MS;
 /// Commands handled per tick before the loop returns to polling.
 const COMMAND_BATCH: usize = 16;
@@ -78,9 +69,8 @@ pub enum Command {
     ForceEnd,
     StartManual,
     StopManual,
-    RunTest {
-        category: Category,
-    },
+    /// Record a short simulated map run.
+    RunTest,
     ReselectCaptureTarget,
     SaveConfig {
         draft: Box<Config>,
@@ -102,8 +92,6 @@ pub enum Command {
     },
     SetMarkerVisibility {
         deaths: DeathMarkerVisibility,
-        encounters: MarkerVisibility,
-        rounds: MarkerVisibility,
     },
     /// Debounced UI geometry write from the shell: divider and column widths.
     SaveLayout {
@@ -129,17 +117,11 @@ pub struct ActiveRecordingView {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppSnapshot {
     pub entries: Arc<Vec<LibraryEntry>>,
-    pub correlations: Arc<Vec<CorrelatedActivity>>,
     pub category_counts: Vec<(Category, usize)>,
     pub status: RecorderStatus,
     pub active: Option<ActiveRecordingView>,
     pub config: Config,
     pub setup_problems: Vec<ValidationProblem>,
-    /// One entry per enabled flavour: its config field name and whether
-    /// advanced combat logging is on. `None` when `Config.wtf` could not be
-    /// read, which is the normal case in the sandbox: the portal exports the
-    /// chosen Logs folder alone, never its `WTF` sibling.
-    pub advanced_logging: Vec<(&'static str, Option<bool>)>,
     pub problems: Vec<Problem>,
     pub work: Option<WorkProgress>,
     pub queued_jobs: usize,
@@ -204,18 +186,16 @@ pub struct Setup {
     pub data_dir: PathBuf,
     pub gsr_binary: PathBuf,
     pub media: MediaConfig,
-    /// Year used to expand the combat log's month/day timestamps.
-    pub year: i32,
     pub recorder_timeouts: Timeouts,
     /// Idle pacing for one coordinator tick.
     pub poll_interval: Duration,
-    /// Test-recording length; raids run four times as long.
+    /// Test-recording length.
     pub test_duration: Duration,
 }
 
 impl Setup {
     pub fn from_environment() -> Result<Self, ConfigError> {
-        let (year, utc_offset_minutes) = local_clock();
+        let utc_offset_minutes = local_utc_offset_minutes();
         let config_path = crate::config::config_path_from_environment()?;
         Ok(Self {
             data_dir: config_path
@@ -228,7 +208,6 @@ impl Setup {
                 utc_offset_minutes,
                 ..MediaConfig::default()
             },
-            year,
             recorder_timeouts: Timeouts::default(),
             poll_interval: Duration::from_millis(50),
             test_duration: Duration::from_secs(5),
@@ -275,12 +254,10 @@ struct ActiveRecording {
     stop_at_ms: Option<i64>,
 }
 
-/// A capture whose stop was requested and whose artifacts have not arrived.
-/// `Finalize` carries the draft the media worker needs; `Discard` only waits
-/// so the artifacts can be swept instead of kept.
+/// A capture whose stop was requested and whose artifacts have not arrived,
+/// with the draft the media worker needs to save it.
 enum EndingCapture {
     Finalize(Box<RecordingDraft>),
-    Discard,
 }
 
 /// An activity held back because GSR was still writing the previous capture.
@@ -295,11 +272,9 @@ struct DeferredBegin {
 pub struct Coordinator {
     setup: Setup,
     config: Config,
-    engine: ActivityEngine,
     recorder: Recorder,
     armed: bool,
     storage: Storage,
-    tailers: Vec<LogTailer>,
     /// Path of Exile 2 map runs, when enabled.
     poe2: Option<Poe2Source>,
     /// Per flavour: wall-clock and log time of the newest observed event.
@@ -310,8 +285,9 @@ pub struct Coordinator {
     ending: Option<EndingCapture>,
     /// An activity that began while the previous capture was still flushing.
     deferred_begin: Option<DeferredBegin>,
-    /// Injected test end event, released once its wall-clock deadline passes.
-    pending_test_end: Option<(i64, ParsedEvent)>,
+    /// A test recording's finished draft, released once its wall-clock
+    /// deadline passes.
+    pending_test_end: Option<(i64, RecordingDraft)>,
 
     media_jobs: SyncSender<MediaJob>,
     media_events_tx: Sender<MediaEvent>,
@@ -328,7 +304,6 @@ pub struct Coordinator {
 
     problems: Vec<Problem>,
     setup_problems: Vec<ValidationProblem>,
-    advanced_logging: Vec<(&'static str, Option<bool>)>,
     storage_used_bytes: u64,
     protected_over_limit: bool,
 
@@ -374,11 +349,9 @@ impl Coordinator {
         Self {
             setup,
             config,
-            engine: ActivityEngine::new(),
             recorder: Recorder::new(),
             armed: false,
             storage,
-            tailers: Vec::new(),
             poe2: None,
             last_event: HashMap::new(),
             index: LibraryIndex::default(),
@@ -398,7 +371,6 @@ impl Coordinator {
             sweep_pending: false,
             problems,
             setup_problems: Vec::new(),
-            advanced_logging: Vec::new(),
             storage_used_bytes: 0,
             protected_over_limit: false,
             commands,
@@ -509,7 +481,7 @@ impl Coordinator {
             Command::ForceEnd => self.force_end(),
             Command::StartManual => self.start_manual(),
             Command::StopManual => self.stop_manual(),
-            Command::RunTest { category } => self.run_test(&category),
+            Command::RunTest => self.run_test(),
             Command::ReselectCaptureTarget => self.reselect_target(),
             Command::SaveConfig { draft } => self.save_config(*draft),
             Command::SetProtected { ids, value } => {
@@ -525,15 +497,9 @@ impl Coordinator {
                 draft.interface.selected_category = category;
                 self.patch_config(draft);
             }
-            Command::SetMarkerVisibility {
-                deaths,
-                encounters,
-                rounds,
-            } => {
+            Command::SetMarkerVisibility { deaths } => {
                 let mut draft = self.config.clone();
                 draft.interface.death_markers = deaths;
-                draft.interface.encounter_markers = encounters;
-                draft.interface.round_markers = rounds;
                 self.patch_config(draft);
             }
             Command::SaveLayout { layout } => {
@@ -663,9 +629,9 @@ impl Coordinator {
                         CAPTURE_STOPPED_PROBLEM,
                         Some(format!("gpu-screen-recorder exited with code {code:?}")),
                     );
-                    if let Some(active) = self.active.take() {
+                    if self.active.take().is_some() {
                         self.pending_test_end = None;
-                        self.drop_activity(&active.draft.flavor);
+                        self.drop_activity();
                         self.sweep_capture_dirs();
                     }
                 }
@@ -683,7 +649,7 @@ impl Coordinator {
         }
     }
 
-    // --- Log polling and the activity engine ---
+    // --- Log polling ---
 
     fn open_tailers(&mut self) -> bool {
         // A run in progress would lose its tracker state: finish it first.
@@ -692,26 +658,8 @@ impl Coordinator {
                 self.apply_poe2(action);
             }
         }
-        self.tailers.clear();
-        self.advanced_logging.clear();
         self.last_event.clear();
-        let context = ParseTimeContext::new(self.setup.year, self.setup.media.utc_offset_minutes);
         let mut all_opened = true;
-        for (field, flavor, source) in enabled_log_sources(&self.config) {
-            self.advanced_logging
-                .push((field, advanced_logging_enabled(&source)));
-            match LogTailer::open(source.clone(), flavor, context) {
-                Ok(tailer) => self.tailers.push(tailer),
-                Err(error) => {
-                    all_opened = false;
-                    self.push_problem(
-                        format!("The {field} log folder could not be watched."),
-                        Some(error.to_string()),
-                        Some(RecoveryAction::OpenSettings),
-                    );
-                }
-            }
-        }
         let poe2 = &self.config.flavors.poe2;
         if poe2.enabled && !poe2.log_dir.path.as_os_str().is_empty() {
             let grace_ms = i64::from(self.config.activities.map_grace_seconds) * 1_000;
@@ -736,19 +684,6 @@ impl Coordinator {
     }
 
     fn poll_logs(&mut self) {
-        let mut events = Vec::new();
-        for tailer in &mut self.tailers {
-            match tailer.poll() {
-                Ok(polled) => events.extend(polled),
-                Err(error) => tracing::warn!(%error, "log poll failed"),
-            }
-            for diagnostic in tailer.take_diagnostics() {
-                tracing::debug!(?diagnostic, "log diagnostic");
-            }
-        }
-        for event in events {
-            self.feed(event);
-        }
         let Some(source) = self.poe2.as_mut() else {
             return;
         };
@@ -779,52 +714,6 @@ impl Coordinator {
                 self.begin(*draft, late_by_ms);
             }
             Poe2Action::Complete(draft) => self.finish(*draft),
-        }
-    }
-
-    /// The single entry point for parsed events, shared by live logs and test
-    /// recordings.
-    fn feed(&mut self, event: ParsedEvent) {
-        self.last_event
-            .insert(event.flavor.clone(), (now_unix_ms(), event.occurred_at_ms));
-        let actions = self.engine.handle(event, &self.config.activities);
-        for action in actions {
-            self.apply(action);
-        }
-    }
-
-    fn apply(&mut self, action: ActivityAction) {
-        self.dirty = true;
-        match action {
-            ActivityAction::Begin { draft } => self.begin(*draft, 0),
-            ActivityAction::Complete { id, .. } | ActivityAction::Abandon { id, .. } => {
-                let Some(draft) = self.engine.take_finished(&id) else {
-                    return;
-                };
-                self.finish(draft);
-            }
-            ActivityAction::Discard { id, reason } => {
-                let _ = self.engine.take_finished(&id);
-                if self
-                    .deferred_begin
-                    .as_ref()
-                    .is_some_and(|deferred| deferred.draft.id == id)
-                {
-                    // Never captured, nothing written: just forget it.
-                    self.deferred_begin = None;
-                    tracing::info!(?reason, "discarding deferred recording");
-                    return;
-                }
-                if self
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| active.draft.id == id)
-                {
-                    tracing::info!(?reason, "discarding recording");
-                    self.active = None;
-                    self.cancel_capture(&id);
-                }
-            }
         }
     }
 
@@ -867,7 +756,7 @@ impl Coordinator {
             self.end_capture();
         }
         if self.active.is_some() {
-            self.drop_activity(&draft.flavor);
+            self.drop_activity();
             return;
         }
         // GSR is still writing the previous capture. Hold the draft instead of
@@ -875,7 +764,7 @@ impl Coordinator {
         // lead-in is recomputed from the real start when the capture begins.
         if self.ending.is_some() {
             if self.deferred_begin.is_some() {
-                self.drop_activity(&draft.flavor);
+                self.drop_activity();
                 return;
             }
             self.deferred_begin = Some(DeferredBegin {
@@ -914,26 +803,15 @@ impl Coordinator {
             }
             Err(error) => {
                 self.push_recorder_problem(&error);
-                self.drop_activity(&draft.flavor);
+                self.drop_activity();
             }
         }
     }
 
-    /// Clear the engine's activity for a flavour without recording anything.
-    fn drop_activity(&mut self, flavor: &GameFlavor) {
-        if *flavor == GameFlavor::Poe2 {
-            if let Some(source) = self.poe2.as_mut() {
-                source.drop_run(now_unix_ms());
-            }
-            return;
-        }
-        for action in self.engine.force_end(flavor.clone(), now_unix_ms()) {
-            if let ActivityAction::Complete { id, .. }
-            | ActivityAction::Abandon { id, .. }
-            | ActivityAction::Discard { id, .. } = action
-            {
-                let _ = self.engine.take_finished(&id);
-            }
+    /// Forget the map run in progress without recording anything.
+    fn drop_activity(&mut self) {
+        if let Some(source) = self.poe2.as_mut() {
+            source.drop_run(now_unix_ms());
         }
     }
 
@@ -946,21 +824,22 @@ impl Coordinator {
                 self.stop_manual();
                 return;
             }
-            RecordingMode::Automatic | RecordingMode::Test(_) => {}
+            RecordingMode::Test(_) => {
+                // The test run ends now instead of at its deadline.
+                if let Some((_, mut draft)) = self.pending_test_end.take() {
+                    let ended_at_ms = now_unix_ms();
+                    draft.ended_at_ms = Some(ended_at_ms);
+                    draft.duration_ms = Some((ended_at_ms - draft.started_at_ms).max(0) as u64);
+                    self.finish(draft);
+                }
+                return;
+            }
+            RecordingMode::Automatic => {}
         }
-        let flavor = active.draft.flavor.clone();
-        let occurred_at_ms = now_unix_ms();
-        self.pending_test_end = None;
-        if flavor == GameFlavor::Poe2 {
-            self.force_end_poe2(occurred_at_ms);
-            return;
-        }
-        for action in self.engine.force_end(flavor, occurred_at_ms) {
-            self.apply(action);
-        }
+        self.force_end_poe2(now_unix_ms());
     }
 
-    /// Retail 10 min, classic/era 2 min without new log data ends at last-data time.
+    /// A log silent for `POE2_DATA_TIMEOUT_MS` ends the run at last-data time.
     fn check_data_timeout(&mut self, now_ms: i64) {
         let Some(active) = self.active.as_ref() else {
             return;
@@ -968,17 +847,12 @@ impl Coordinator {
         if active.mode != RecordingMode::Automatic || active.stop_at_ms.is_some() {
             return;
         }
-        let flavor = active.draft.flavor.clone();
-        let limit = match flavor {
-            GameFlavor::Retail => RETAIL_DATA_TIMEOUT_MS,
-            GameFlavor::Poe2 => POE2_DATA_TIMEOUT_MS,
-            _ => CLASSIC_DATA_TIMEOUT_MS,
-        };
-        let Some((seen_wall_ms, seen_log_ms)) = self.last_event.get(&flavor).copied() else {
+        let Some((seen_wall_ms, seen_log_ms)) = self.last_event.get(&GameFlavor::Poe2).copied()
+        else {
             return;
         };
         let wall_gap_ms = now_ms - seen_wall_ms;
-        if wall_gap_ms < limit {
+        if wall_gap_ms < POE2_DATA_TIMEOUT_MS {
             return;
         }
         tracing::warn!(
@@ -986,13 +860,7 @@ impl Coordinator {
             seen_log_ms,
             "data timeout: force-ending automatic recording (log idle on disk)"
         );
-        if flavor == GameFlavor::Poe2 {
-            self.force_end_poe2(seen_log_ms);
-            return;
-        }
-        for action in self.engine.force_end(flavor, seen_log_ms) {
-            self.apply(action);
-        }
+        self.force_end_poe2(seen_log_ms);
     }
 
     /// End the map run at `at_ms`; a run already out of the map ends when
@@ -1023,19 +891,16 @@ impl Coordinator {
         let draft = RecordingDraft {
             id: RecordingId::new(),
             category: Category::Manual,
-            flavor: GameFlavor::Retail,
+            flavor: GameFlavor::Poe2,
             started_at_ms,
             overrun_ms: 0,
             details: ActivityDetails::Manual,
             player: None,
-            combatants: Vec::new(),
             timeline: Vec::new(),
             outcome: None,
             ended_at_ms: None,
             duration_ms: None,
             title: Some("Manual recording".to_owned()),
-            activity_hash: None,
-            meter: MeterData::default(),
         };
         self.start_capture(draft, 0, RecordingMode::Manual);
     }
@@ -1054,9 +919,9 @@ impl Coordinator {
         active.stop_at_ms = Some(ended_at_ms);
     }
 
-    /// Inject the minimum events for the chosen category, then release the end
-    /// event once the test duration has elapsed.
-    fn run_test(&mut self, category: &Category) {
+    /// Record a short simulated map run through the normal capture and save
+    /// path; its finished draft is released once the test duration elapses.
+    fn run_test(&mut self) {
         if self.capture_in_flight() || self.pending_test_end.is_some() || !self.armed {
             self.push_problem(
                 "A test recording could not be started.",
@@ -1065,28 +930,11 @@ impl Coordinator {
             );
             return;
         }
-        let duration = if *category == Category::Raids {
-            self.setup.test_duration * 4
-        } else {
-            self.setup.test_duration
-        };
         let start_ms = now_unix_ms();
-        let end_ms = start_ms + duration.as_millis() as i64;
-        let Some((start_events, end_event)) = test_events(category, start_ms, end_ms) else {
-            self.push_problem(
-                "That category has no test recording.",
-                None,
-                Some(RecoveryAction::Retry),
-            );
-            return;
-        };
-        for event in start_events {
-            self.feed(event);
-        }
-        // Nothing was in flight, so any capture now running is this test's.
-        if let Some(active) = self.active.as_mut() {
-            active.mode = RecordingMode::Test(category.clone());
-            self.pending_test_end = Some((end_ms, end_event));
+        let (draft, finished) = test_map_run(start_ms, self.setup.test_duration);
+        self.start_capture(draft, 0, RecordingMode::Test(Category::MapRuns));
+        if self.active.is_some() {
+            self.pending_test_end = Some((finished.ended_at_ms.unwrap_or(start_ms), finished));
         }
     }
 
@@ -1097,8 +945,8 @@ impl Coordinator {
         if let Some((due_ms, _)) = &self.pending_test_end
             && *due_ms <= now_ms
         {
-            let (_, event) = self.pending_test_end.take().expect("checked above");
-            self.feed(event);
+            let (_, draft) = self.pending_test_end.take().expect("checked above");
+            self.finish(draft);
         }
         self.check_data_timeout(now_ms);
         if self
@@ -1128,15 +976,6 @@ impl Coordinator {
         }
     }
 
-    /// Stop capture without producing an entry and quarantine what GSR wrote.
-    fn cancel_capture(&mut self, id: &RecordingId) {
-        self.dirty = true;
-        match self.recorder.request_end(id) {
-            Ok(()) => self.ending = Some(EndingCapture::Discard),
-            Err(error) => self.push_recorder_problem(&error),
-        }
-    }
-
     /// The recorder resolved a requested end. Missing artifacts mean GSR never
     /// wrote the regular recording within its bounded wait.
     fn capture_ended(&mut self, artifacts: Option<CaptureArtifacts>) {
@@ -1149,15 +988,6 @@ impl Coordinator {
                 self.push_recorder_problem(&RecorderError::MissingRegularArtifact);
                 self.sweep_capture_dirs();
             }
-            (Some(EndingCapture::Discard), Some(artifacts)) => {
-                let report = self
-                    .storage
-                    .quarantine_capture(&artifacts, "discarded recording");
-                if !report.failures.is_empty() {
-                    tracing::warn!(failures = ?report.failures, "discarded capture could not be quarantined");
-                }
-            }
-            (Some(EndingCapture::Discard), None) => self.sweep_capture_dirs(),
             (None, _) => {}
         }
         // Quitting drains this same path and the recorder is killed right
@@ -1721,20 +1551,14 @@ impl Coordinator {
             };
         }
         // A stop was requested and GSR is still writing: the recording is not
-        // over from the user's side, so do not fall back to Ready. A discarded
-        // capture is not being saved, so say what is actually happening.
-        if matches!(self.ending, Some(EndingCapture::Discard)) {
-            return RecorderStatus::Finalizing {
-                title: "Discarding recording".to_owned(),
-            };
-        }
+        // over from the user's side, so do not fall back to Ready.
         if self.ending.is_some() || self.media_busy == Some(WorkKind::Finalize) {
             return RecorderStatus::Finalizing {
                 title: "Saving recording".to_owned(),
             };
         }
         if !self.armed {
-            return RecorderStatus::WaitingForWow;
+            return RecorderStatus::WaitingForCapture;
         }
         RecorderStatus::Ready
     }
@@ -1754,13 +1578,11 @@ impl Coordinator {
         });
         Arc::new(AppSnapshot {
             entries: Arc::clone(&self.index.entries),
-            correlations: Arc::clone(&self.index.correlations),
             category_counts: category_counts(&self.index.entries),
             status: self.status(),
             active,
             config: self.config.clone(),
             setup_problems: self.setup_problems.clone(),
-            advanced_logging: self.advanced_logging.clone(),
             problems: self.problems.clone(),
             work: self.work.clone(),
             queued_jobs: self.finalize_queue.len() + self.user_queue.len(),
@@ -1918,38 +1740,6 @@ fn spawn_media_worker(
     Ok((jobs, control, join))
 }
 
-fn enabled_log_sources(config: &Config) -> Vec<(&'static str, GameFlavor, PathBuf)> {
-    [
-        ("retail", GameFlavor::Retail, &config.flavors.retail),
-        ("retail_ptr", GameFlavor::Retail, &config.flavors.retail_ptr),
-        ("classic", GameFlavor::Classic, &config.flavors.classic),
-        (
-            "classic_ptr",
-            GameFlavor::Classic,
-            &config.flavors.classic_ptr,
-        ),
-        ("era", GameFlavor::Era, &config.flavors.era),
-    ]
-    .into_iter()
-    .filter(|(_, _, flavor)| flavor.enabled && !flavor.log_dir.path.as_os_str().is_empty())
-    .map(|(field, game, flavor)| (field, game, flavor.log_dir.path.clone()))
-    .collect()
-}
-
-/// Whether the `Config.wtf` beside the Logs folder carries
-/// `SET advancedCombatLogging "1"`. `None` means the file could not be read
-/// rather than that the setting is off: the folder portal exports the chosen
-/// Logs directory on its own, so the `WTF` sibling is outside the sandbox and
-/// a failed read says nothing about the game's configuration.
-fn advanced_logging_enabled(log_dir: &Path) -> Option<bool> {
-    let parent = log_dir.parent()?;
-    let text = std::fs::read_to_string(parent.join("WTF").join("Config.wtf")).ok()?;
-    Some(text.lines().any(|line| {
-        let line = line.trim();
-        line.starts_with("SET advancedCombatLogging") && line.rsplit(' ').next() == Some("\"1\"")
-    }))
-}
-
 fn category_counts(entries: &[LibraryEntry]) -> Vec<(Category, usize)> {
     let mut counts: Vec<(Category, usize)> = Vec::new();
     for entry in entries {
@@ -1964,216 +1754,61 @@ fn category_counts(entries: &[LibraryEntry]) -> Vec<(Category, usize)> {
     counts
 }
 
-fn local_clock() -> (i32, i32) {
+fn local_utc_offset_minutes() -> i32 {
     let seconds = now_unix_ms().div_euclid(1_000) as libc::time_t;
     let mut local = unsafe { std::mem::zeroed::<libc::tm>() };
     // `localtime_r` follows the system's configured zone, including DST.
     if unsafe { libc::localtime_r(&seconds, &mut local) }.is_null() {
-        return (local_year(), 0);
+        return 0;
     }
-    (local.tm_year + 1900, utc_offset_minutes(local.tm_gmtoff))
+    (local.tm_gmtoff / 60) as i32
 }
 
-fn utc_offset_minutes(seconds: libc::c_long) -> i32 {
-    (seconds / 60) as i32
-}
-
-fn local_year() -> i32 {
-    // Days since the epoch to a civil year, without pulling in a date crate.
-    let days = now_unix_ms().div_euclid(86_400_000);
-    let mut year = 1970;
-    let mut remaining = days;
-    loop {
-        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-        let length = if leap { 366 } else { 365 };
-        if remaining < length {
-            return year;
-        }
-        remaining -= length;
-        year += 1;
-    }
-}
-
-/// The minimum parsed events that drive one category through the activity
-/// engine, used by test recordings.
-fn test_events(
-    category: &Category,
-    start_ms: i64,
-    end_ms: i64,
-) -> Option<(Vec<ParsedEvent>, ParsedEvent)> {
-    const GUID: &str = "Player-1092-0A70E103";
-    const NAME: &str = "Testplayer-Testrealm";
-    // Affiliation mine, friendly, player-controlled, player type.
-    const SELF_FLAGS: u64 = 0x511;
-    const ALLY_GUID: &str = "Player-1092-0B80F204";
-    const ALLY_NAME: &str = "Testmage-Testrealm";
-    const ALLY_FLAGS: u64 = 0x512;
-    const HOSTILE_FLAGS: u64 = 0xa48;
-    const ENEMY_GUID: &str = "Creature-0-TEST";
-    const ENEMY_NAME: &str = "Test Target";
-
-    let retail = |event: CombatEvent, at_ms: i64| ParsedEvent {
-        flavor: GameFlavor::Retail,
-        occurred_at_ms: at_ms,
-        event,
+/// A simulated map run for test recordings: the draft that begins the
+/// capture and the finished draft that ends it, with one death halfway.
+fn test_map_run(start_ms: i64, duration: Duration) -> (RecordingDraft, RecordingDraft) {
+    let duration_ms = duration.as_millis() as u64;
+    let details = |deaths| ActivityDetails::MapRun {
+        area_id: "MapTest".to_owned(),
+        map_name: "Test Map".to_owned(),
+        area_level: 1,
+        seed: 0,
+        deaths,
+        portal_trips: 0,
+        away_ms: 0,
     };
-    let arena = |zone_id: u32, match_type: &str| CombatEvent::ArenaStarted {
-        zone_id,
-        match_type: match_type.to_owned(),
+    let begin = RecordingDraft {
+        id: RecordingId::new(),
+        category: Category::MapRuns,
+        flavor: GameFlavor::Poe2,
+        started_at_ms: start_ms,
+        overrun_ms: 0,
+        details: details(0),
+        player: None,
+        timeline: Vec::new(),
+        outcome: None,
+        ended_at_ms: None,
+        duration_ms: None,
+        title: Some("Test Map".to_owned()),
     };
-
-    let (start, end) = match category {
-        Category::TwoVTwo => (
-            arena(2547, "2v2"),
-            CombatEvent::ArenaEnded { winning_team_id: 0 },
-        ),
-        Category::ThreeVThree => (
-            arena(980, "3v3"),
-            CombatEvent::ArenaEnded { winning_team_id: 0 },
-        ),
-        Category::SoloShuffle => (
-            arena(2547, "Rated Solo Shuffle"),
-            CombatEvent::ArenaEnded { winning_team_id: 0 },
-        ),
-        Category::Raids => (
-            CombatEvent::EncounterStarted {
-                encounter_id: 2820,
-                name: "Test Encounter".to_owned(),
-                difficulty_id: 16,
-            },
-            CombatEvent::EncounterEnded {
-                difficulty_id: 16,
-                success: true,
-            },
-        ),
-        Category::Battlegrounds => (
-            CombatEvent::ZoneChanged { zone_id: 30 },
-            CombatEvent::ZoneChanged { zone_id: 0 },
-        ),
-        Category::MythicPlus => (
-            CombatEvent::ChallengeStarted {
-                zone_id: 2286,
-                map_id: 377,
-                level: 10,
-                affixes: vec![9, 6, 3],
-            },
-            CombatEvent::ChallengeEnded {
-                success: true,
-                duration_ms: (end_ms - start_ms).max(0) as u64,
-            },
-        ),
-        _ => return None,
+    let finished = RecordingDraft {
+        details: details(1),
+        player: Some(PlayerSummary {
+            name: "Test Exile".to_owned(),
+        }),
+        timeline: vec![TimelineItem::point(
+            TimelineKind::Death,
+            duration_ms / 2,
+            Some("Test Exile".to_owned()),
+            None,
+            None,
+        )],
+        outcome: Some(Outcome::Complete),
+        ended_at_ms: Some(start_ms + duration_ms as i64),
+        duration_ms: Some(duration_ms),
+        ..begin.clone()
     };
-
-    let mut start_events = vec![
-        retail(start, start_ms),
-        retail(
-            CombatEvent::Combatant {
-                guid: GUID.to_owned(),
-                team_id: Some(0),
-                spec_id: Some(577),
-            },
-            start_ms,
-        ),
-        retail(
-            CombatEvent::Combatant {
-                guid: ALLY_GUID.to_owned(),
-                team_id: Some(0),
-                spec_id: Some(63),
-            },
-            start_ms,
-        ),
-        retail(
-            CombatEvent::PlayerObserved {
-                kind: PlayerObservationKind::AuraApplied,
-                aura_type: None,
-                spell_id: 0,
-                guid: GUID.to_owned(),
-                name: NAME.to_owned(),
-                flags: SELF_FLAGS,
-                target_guid: GUID.to_owned(),
-                target_name: NAME.to_owned(),
-                target_flags: SELF_FLAGS,
-                spell_name: "Test Recording".to_owned(),
-                owner_guid: None,
-            },
-            start_ms,
-        ),
-    ];
-    let duration_ms = (end_ms - start_ms).max(0);
-    for (quarter, player_amount, ally_amount) in [
-        (1, 1_000_000, 800_000),
-        (2, 1_500_000, 1_100_000),
-        (3, 2_000_000, 1_400_000),
-    ] {
-        let at_ms = start_ms + duration_ms * quarter / 4;
-        for (guid, name, flags, spell, amount) in [
-            (GUID, NAME, SELF_FLAGS, "Annihilation", player_amount),
-            (ALLY_GUID, ALLY_NAME, ALLY_FLAGS, "Pyroblast", ally_amount),
-        ] {
-            start_events.push(retail(
-                CombatEvent::Damage {
-                    source_guid: guid.to_owned(),
-                    source_name: name.to_owned(),
-                    source_flags: flags,
-                    source_owner_guid: None,
-                    dest_guid: "Creature-0-TEST".to_owned(),
-                    dest_name: "Test Target".to_owned(),
-                    dest_flags: HOSTILE_FLAGS,
-                    dest_raid_marker: 0,
-                    spell_name: spell.to_owned(),
-                    amount,
-                    dest_current_hp: None,
-                    dest_max_hp: None,
-                },
-                at_ms,
-            ));
-        }
-        start_events.push(retail(
-            CombatEvent::Damage {
-                source_guid: ENEMY_GUID.to_owned(),
-                source_name: ENEMY_NAME.to_owned(),
-                source_flags: HOSTILE_FLAGS,
-                source_owner_guid: None,
-                dest_guid: ALLY_GUID.to_owned(),
-                dest_name: ALLY_NAME.to_owned(),
-                dest_flags: ALLY_FLAGS,
-                dest_raid_marker: 0,
-                spell_name: "Void Strike".to_owned(),
-                amount: 180_000 * quarter as u64,
-                dest_current_hp: None,
-                dest_max_hp: None,
-            },
-            at_ms,
-        ));
-        start_events.push(retail(
-            CombatEvent::Heal {
-                source_guid: GUID.to_owned(),
-                source_name: NAME.to_owned(),
-                source_flags: SELF_FLAGS,
-                dest_guid: ALLY_GUID.to_owned(),
-                dest_name: ALLY_NAME.to_owned(),
-                dest_flags: ALLY_FLAGS,
-                dest_raid_marker: 0,
-                spell_name: "Soul Mend".to_owned(),
-                dest_current_hp: None,
-                dest_max_hp: None,
-                amount: 120_000 * quarter as u64,
-                overheal: 0,
-            },
-            at_ms + 1,
-        ));
-    }
-    start_events.push(retail(
-        CombatEvent::UnitDied {
-            guid: ALLY_GUID.to_owned(),
-            name: ALLY_NAME.to_owned(),
-            flags: ALLY_FLAGS,
-            unconscious: false,
-        },
-        end_ms - 1,
-    ));
-    Some((start_events, retail(end, end_ms)))
+    (begin, finished)
 }
 
 #[cfg(test)]
@@ -2184,16 +1819,15 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        ActiveRecording, CAPTURE_RESTART_FAILED_PROBLEM, CAPTURE_STOPPED_PROBLEM, CaptureArtifacts,
-        Coordinator, EndingCapture, EntryUpdate, MediaConfig, Problem, RecordingDraft,
-        RecordingMode, RecoveryAction, Setup, Storage, Timeouts, clear_recovered_capture_problems,
-        now_unix_ms, test_events,
+        ActiveRecording, CAPTURE_RESTART_FAILED_PROBLEM, CAPTURE_STOPPED_PROBLEM, Coordinator,
+        EndingCapture, EntryUpdate, MediaConfig, Problem, RecordingDraft, RecordingMode,
+        RecoveryAction, Setup, Storage, Timeouts, clear_recovered_capture_problems, now_unix_ms,
+        test_map_run,
     };
     use crate::domain::{
-        ActivityDetails, Category, GameFlavor, LibraryEntry, MediaFacts, MeterData, Outcome,
-        RecordingId, WorkKind,
+        ActivityDetails, Category, GameFlavor, LibraryEntry, MediaFacts, Outcome, RecordingId,
+        WorkKind,
     };
-    use crate::parser::CombatEvent;
     use crate::storage::RECOVERY_DIR;
 
     #[test]
@@ -2246,8 +1880,6 @@ mod tests {
         std::fs::create_dir_all(&regular_dir).unwrap();
         let queued = regular_dir.join("Video_queued.mkv");
         std::fs::write(&queued, b"queued").unwrap();
-        let discarded = regular_dir.join("Video_discarded.mkv");
-        std::fs::write(&discarded, b"discarded").unwrap();
 
         {
             let (_commands, commands_rx) = mpsc::sync_channel(1);
@@ -2258,7 +1890,6 @@ mod tests {
                     data_dir: root.join("recorder"),
                     gsr_binary: PathBuf::from("true"),
                     media: MediaConfig::default(),
-                    year: 2026,
                     recorder_timeouts: Timeouts::default(),
                     poll_interval: Duration::from_millis(5),
                     test_duration: Duration::from_millis(200),
@@ -2271,19 +1902,9 @@ mod tests {
             // The queued recording's finalization is running.
             coordinator.media_busy = Some(WorkKind::Finalize);
 
-            coordinator.ending = Some(EndingCapture::Discard);
-            coordinator.capture_ended(Some(CaptureArtifacts {
-                replay: None,
-                regular: discarded.clone(),
-                requested_replay_ms: 0,
-                regular_started_at_ms: 0,
-                regular_stopped_at_ms: 0,
-            }));
-            assert!(!discarded.exists(), "the discarded capture was kept");
-            assert!(queued.exists(), "the discard swept a queued input");
-
             // GSR never produced the regular file: sweep, but not yet.
-            coordinator.ending = Some(EndingCapture::Discard);
+            let (draft, _) = test_map_run(now_unix_ms(), Duration::from_secs(1));
+            coordinator.ending = Some(EndingCapture::Finalize(Box::new(draft)));
             coordinator.capture_ended(None);
             assert!(queued.exists(), "the sweep ran while media work was busy");
 
@@ -2296,38 +1917,20 @@ mod tests {
                     .filter_map(Result::ok)
                     .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "mkv"))
                     .count(),
-                2
+                1
             );
         }
         std::fs::remove_dir_all(&root).ok();
     }
     #[test]
-    fn test_recording_exercises_damage_taken_and_death_log() {
-        let (events, _) = test_events(&Category::MythicPlus, 0, 4_000).unwrap();
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(
-                    event.event,
-                    CombatEvent::Damage {
-                        ref dest_guid,
-                        ..
-                    } if dest_guid == "Player-1092-0B80F204"
-                ))
-                .count(),
-            3
-        );
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event.event, CombatEvent::Heal { .. }))
-                .count(),
-            3
-        );
-        assert!(matches!(
-            events.last().map(|event| &event.event),
-            Some(CombatEvent::UnitDied { .. })
-        ));
+    fn a_test_map_run_ends_with_one_death_halfway() {
+        let (begin, finished) = test_map_run(1_000, Duration::from_secs(4));
+        assert_eq!(begin.id, finished.id);
+        assert_eq!(begin.category, Category::MapRuns);
+        assert!(begin.timeline.is_empty());
+        assert_eq!(finished.ended_at_ms, Some(5_000));
+        assert_eq!(finished.timeline.len(), 1);
+        assert_eq!(finished.timeline[0].start_ms(), 2_000);
     }
     /// A bulk mutation must service recorder deadlines between entries, not
     /// only once the tick's own polls run: serial sidecar writes would
@@ -2356,16 +1959,14 @@ mod tests {
                 media_path,
                 sidecar_path,
                 category: Category::Manual,
-                flavor: GameFlavor::Retail,
+                flavor: GameFlavor::Poe2,
                 title: name.to_owned(),
                 start_unix_ms: now_unix_ms() - 61_000,
                 duration_ms: 60_000,
                 outcome: Outcome::Unknown,
                 protected: false,
                 tag: None,
-                activity_hash: None,
                 player: None,
-                combatants: Vec::new(),
                 details: ActivityDetails::Manual,
                 timeline: Vec::new(),
                 media: MediaFacts {
@@ -2376,9 +1977,7 @@ mod tests {
                     has_content: true,
                 },
             };
-            sidecar_storage
-                .write_new_entry(&entry, &MeterData::default(), &source)
-                .unwrap();
+            sidecar_storage.write_new_entry(&entry, &source).unwrap();
             entries.push(entry);
         }
 
@@ -2391,7 +1990,6 @@ mod tests {
                     data_dir: root.join("recorder"),
                     gsr_binary: PathBuf::from("true"),
                     media: MediaConfig::default(),
-                    year: 2026,
                     recorder_timeouts: Timeouts::default(),
                     poll_interval: Duration::from_millis(5),
                     test_duration: Duration::from_millis(200),
@@ -2406,20 +2004,17 @@ mod tests {
             coordinator.active = Some(ActiveRecording {
                 draft: RecordingDraft {
                     id: RecordingId::new(),
-                    category: Category::Raids,
-                    flavor: GameFlavor::Retail,
+                    category: Category::Manual,
+                    flavor: GameFlavor::Poe2,
                     started_at_ms: now_unix_ms(),
                     overrun_ms: 0,
                     details: ActivityDetails::Manual,
                     player: None,
-                    combatants: Vec::new(),
                     timeline: Vec::new(),
                     outcome: None,
                     ended_at_ms: None,
                     duration_ms: None,
                     title: None,
-                    activity_hash: None,
-                    meter: MeterData::default(),
                 },
                 mode: RecordingMode::Automatic,
                 started_unix_ms: now_unix_ms(),

@@ -4,8 +4,8 @@
 //!
 //! `Poe2Source` follows `<logs>/Client.txt` from its end, feeds each line to
 //! the `poe2_log` map tracker, and turns the tracker's begin/complete
-//! decisions into the same `RecordingDraft`s the WoW activity engine emits,
-//! so the coordinator records, overruns and finalizes them the same way.
+//! decisions into `RecordingDraft`s for the coordinator to record, overrun
+//! and finalize.
 //!
 //! Notes:
 //! - The game only appends to `Client.txt`; a shorter file or a different
@@ -26,9 +26,8 @@ use std::time::UNIX_EPOCH;
 use poe2_log::parse_line;
 use poe2_log::tracker::{MapAction, MapRun, MapStart, MapTracker, map_display_name};
 
-use crate::activity::RecordingDraft;
 use crate::domain::{
-    ActivityDetails, Category, GameFlavor, MeterData, Outcome, PlayerSummary, RecordingId,
+    ActivityDetails, Category, GameFlavor, Outcome, PlayerSummary, RecordingDraft, RecordingId,
     TimelineItem, TimelineKind,
 };
 
@@ -287,14 +286,11 @@ fn begin_draft(id: RecordingId, start: &MapStart) -> RecordingDraft {
         overrun_ms: 0,
         details: details(start, None),
         player: None,
-        combatants: Vec::new(),
         timeline: Vec::new(),
         outcome: None,
         ended_at_ms: None,
         duration_ms: None,
         title: Some(map_display_name(&start.area_id)),
-        activity_hash: None,
-        meter: MeterData::default(),
     }
 }
 
@@ -329,13 +325,7 @@ fn finished_draft(id: RecordingId, run: &MapRun) -> RecordingDraft {
 
     RecordingDraft {
         details: details(&run.start, Some(run)),
-        player: most_deaths(run).map(|name| PlayerSummary {
-            name,
-            realm: None,
-            guid: None,
-            class_id: None,
-            spec_id: None,
-        }),
+        player: most_deaths(run).map(|name| PlayerSummary { name }),
         timeline,
         outcome: Some(Outcome::Complete),
         ended_at_ms: Some(run.ended_at_ms),

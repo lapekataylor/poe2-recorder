@@ -63,9 +63,7 @@
 }
 
 .wr-chip.wr-chip-name { background-color: alpha(@blue_3, 0.25); }
-.wr-chip.wr-chip-spec { background-color: alpha(@purple_3, 0.25); }
 .wr-chip.wr-chip-place { background-color: alpha(@green_3, 0.25); }
-.wr-chip.wr-chip-affix { background-color: alpha(@orange_3, 0.25); }
 .wr-chip.wr-chip-result { background-color: alpha(@red_3, 0.25); }
 .wr-chip.wr-chip-difficulty { background-color: alpha(@yellow_3, 0.30); }
 
@@ -83,155 +81,6 @@
   padding-right: 18px;
 }
 
-/* WoW class colors for player names (canonical palette, dark theme). */
-.wr-class-death-knight { color: #c41e3a; }
-.wr-class-demon-hunter { color: #a330c9; }
-.wr-class-druid { color: #ff7c0a; }
-.wr-class-evoker { color: #33937f; }
-.wr-class-hunter { color: #aad372; }
-.wr-class-mage { color: #3fc7eb; }
-.wr-class-monk { color: #00ff98; }
-.wr-class-paladin { color: #f48cba; }
-.wr-class-priest { color: #ffffff; }
-.wr-class-rogue { color: #fff468; }
-.wr-class-shaman { color: #0070dd; }
-.wr-class-warlock { color: #8788ee; }
-.wr-class-warrior { color: #c69b6d; }
-
-/* Darkened class variants when the system theme is light, for AA contrast.
-   The shell toggles `wr-light` on the window from AdwStyleManager. */
-window.wr-light .wr-class-death-knight { color: #a3122e; }
-window.wr-light .wr-class-demon-hunter { color: #8225a3; }
-window.wr-light .wr-class-druid { color: #b35400; }
-window.wr-light .wr-class-evoker { color: #246b5c; }
-window.wr-light .wr-class-hunter { color: #4f7d24; }
-window.wr-light .wr-class-mage { color: #0e7ca3; }
-window.wr-light .wr-class-monk { color: #008a5c; }
-window.wr-light .wr-class-paladin { color: #c2477e; }
-window.wr-light .wr-class-priest { color: #6a6a6a; }
-window.wr-light .wr-class-rogue { color: #8f7e00; }
-window.wr-light .wr-class-shaman { color: #005bb0; }
-window.wr-light .wr-class-warlock { color: #5a5bc2; }
-window.wr-light .wr-class-warrior { color: #7d5f36; }
-
-/* Damage meter overlay: solid black on the player area. The 13 fills
-   deliberately mirror the dark class palette above: the `wr-light` overrides
-   only set `color`, but the meter's labels are always white and its fills must
-   not inherit light-theme text rules. */
-.wr-meter {
-  background-color: #000000;
-  border-radius: 6px;
-  padding: 4px;
-}
-
-.wr-meter label {
-  color: #ffffff;
-}
-
-.wr-meter label.dim-label {
-  color: alpha(#ffffff, 0.55);
-}
-
-.wr-meter-header button {
-  min-width: 18px;
-  min-height: 18px;
-  padding: 0 4px;
-}
-
-.wr-meter-header label {
-  font-size: 0.9em;
-  font-weight: 600;
-}
-
-.wr-meter-row {
-  padding: 0;
-  min-height: 24px;
-  border-radius: 4px;
-}
-
-/* Rows are data, not controls to invite: the fill is the whole visual, so the
-   flat-button hover tint is suppressed. That also stops the prelight restyle
-   churn while the cursor rests on rows that playback re-creates every
-   interval. */
-.wr-meter button.wr-meter-row:hover {
-  background-color: transparent;
-  background-image: none;
-}
-
-/* Trough and progress share a height so the fill covers the whole row rather
-   than a band floating in it. The gradient is a sheen over the solid class
-   color, not the fill itself. */
-.wr-meter-fill trough,
-.wr-meter-fill progress {
-  min-height: 24px;
-  border-radius: 4px;
-}
-
-.wr-meter-fill trough {
-  background-color: alpha(#ffffff, 0.06);
-}
-
-.wr-meter-fill progress {
-  background-image: linear-gradient(to bottom, alpha(#ffffff, 0.10), alpha(#000000, 0.18));
-}
-
-.wr-meter-fill.wr-class-death-knight progress { background-color: mix(#c41e3a, #000000, 0.35); }
-.wr-meter-fill.wr-class-demon-hunter progress { background-color: mix(#a330c9, #000000, 0.35); }
-.wr-meter-fill.wr-class-druid progress { background-color: mix(#ff7c0a, #000000, 0.35); }
-.wr-meter-fill.wr-class-evoker progress { background-color: mix(#33937f, #000000, 0.35); }
-.wr-meter-fill.wr-class-hunter progress { background-color: mix(#aad372, #000000, 0.35); }
-.wr-meter-fill.wr-class-mage progress { background-color: mix(#3fc7eb, #000000, 0.35); }
-.wr-meter-fill.wr-class-monk progress { background-color: mix(#00ff98, #000000, 0.35); }
-.wr-meter-fill.wr-class-paladin progress { background-color: mix(#f48cba, #000000, 0.35); }
-.wr-meter-fill.wr-class-priest progress { background-color: mix(#ffffff, #000000, 0.35); }
-.wr-meter-fill.wr-class-rogue progress { background-color: mix(#fff468, #000000, 0.35); }
-.wr-meter-fill.wr-class-shaman progress { background-color: mix(#0070dd, #000000, 0.35); }
-.wr-meter-fill.wr-class-warlock progress { background-color: mix(#8788ee, #000000, 0.35); }
-.wr-meter-fill.wr-class-warrior progress { background-color: mix(#c69b6d, #000000, 0.35); }
-
-/* Death log rows are health bars, and get more air than ranking rows. */
-.wr-meter-fill.wr-death-damage progress { background-color: mix(#c41e3a, #000000, 0.35); }
-.wr-meter-fill.wr-death-healing progress { background-color: mix(#00b34f, #000000, 0.35); }
-
-.wr-meter-fill.wr-death-damage trough,
-.wr-meter-fill.wr-death-healing trough,
-.wr-meter-fill.wr-death-damage progress,
-.wr-meter-fill.wr-death-healing progress {
-  min-height: 26px;
-}
-
-/* Spell icons sit at the left of a row, before the spell name. */
-.wr-spell-icon {
-  margin-right: 4px;
-  border-radius: 3px;
-}
-
-/* The shared spell tooltip: a compact panel parked on the video overlay to
-   the left of the hovered icon. It must not inherit widget text colour; the
-   labels carry their own rules below. */
-.wr-tooltip {
-  background-color: #141414;
-  border: 1px solid alpha(#ffffff, 0.12);
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-
-.wr-tooltip-icon {
-  border-radius: 4px;
-}
-
-.wr-tooltip-name {
-  color: #ffffff;
-  font-weight: 600;
-  font-size: 1em;
-}
-
-.wr-tooltip-desc {
-  color: alpha(#ffffff, 0.85);
-  font-size: 0.85em;
-  line-height: 1.25;
-}
-
 /* Setup/error detail: technical text stays selectable but quiet. */
 .problem-detail {
   font-family: monospace;
@@ -239,7 +88,7 @@ window.wr-light .wr-class-warrior { color: #7d5f36; }
   color: alpha(@window_fg_color, 0.7);
 }
 
-/* The recording folder and the combat-log folder are the two settings a fresh
+/* The recording folder and the game-log folder are the two settings a fresh
    install cannot work without, and a sandboxed app cannot
    guess either. Pulse them until they are picked: the row is otherwise
    indistinguishable from the optional ones around it. */

@@ -22,9 +22,9 @@ native choosers, GSR, and FFmpeg behavior. Do not add a webview, async
 runtime, database, generic IPC layer, thumbnail cache, or compatibility
 wrapper. JSON sidecars and the filesystem remain the library source of truth.
 
-The native test fixtures and goldens live under `tests/native/`. The legacy
-sidecar fixtures are retained because they prove the compatible tag/protection
-patch behavior.
+The fake `gpu-screen-recorder` and FFmpeg the tests drive live under
+`tests/native/bin/`. The `Client.txt` parser and map-run tracker are tested in
+`native/poe2-log`, with fixtures written by `scripts/fake-poe2-log.py`.
 
 ## Packaging
 

@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Compiles the two GResource bundles. `data/resources.gresource.xml` (CSS,
-//! category icons, product mark, icon license notices) is embedded in the
-//! binary. `data/spells.gresource.xml` (the spell database and its icons) is
-//! compiled to `$OUT_DIR/spells.gresource` for development runs; the Flatpak
-//! installs its own copy and the app mmaps it at runtime, so the large,
-//! rarely-changing spell data stays out of the binary.
+//! Compiles `data/resources.gresource.xml` (CSS, category icons, product
+//! mark, icon license notices), which is embedded in the binary.
 //! Shells out to the GLib tool instead of adding a build dependency.
 
 use std::path::{Path, PathBuf};
@@ -23,12 +19,6 @@ fn main() {
         let entry = entry.expect("icon asset entry");
         println!("cargo:rerun-if-changed={}", entry.path().display());
     }
-    // The spell database: the JSON plus every bundled spell icon.
-    if let Ok(entries) = std::fs::read_dir(data.join("spells")) {
-        for entry in entries.flatten() {
-            println!("cargo:rerun-if-changed={}", entry.path().display());
-        }
-    }
     let style_dir = manifest_dir.join("src/ui");
     println!(
         "cargo:rerun-if-changed={}",
@@ -40,12 +30,6 @@ fn main() {
         &style_dir,
         &data.join("resources.gresource.xml"),
         &out_dir.join("poe-recorder.gresource"),
-    );
-    compile(
-        &data,
-        &style_dir,
-        &data.join("spells.gresource.xml"),
-        &out_dir.join("spells.gresource"),
     );
 }
 

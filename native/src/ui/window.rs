@@ -762,9 +762,8 @@ fn present_about(parent: &impl IsA<gtk4::Widget>, application: &adw::Application
     about.set_license_type(gtk4::License::Gpl30);
     about.set_comments(
         "Automatic Path of Exile map recording and review.\n\nCategory icons: \
-         Lucide contributors (ISC License); dragon and dungeon icons by \
-         Fonticons, Inc. (CC BY 4.0). Full notices are bundled with the \
-         application.",
+         Lucide contributors (ISC License). The full notice is bundled with \
+         the application.",
     );
     about.set_website("https://github.com/lapekataylor/poe2-recorder");
     about.set_issue_url("https://github.com/lapekataylor/poe2-recorder/issues");
@@ -812,8 +811,8 @@ pub(crate) mod tests {
 
     use poe_recorder::config::Config;
     use poe_recorder::domain::{
-        ActivityDetails, Category, Codec, CorrelatedActivity, GameFlavor, LibraryEntry, MediaFacts,
-        Outcome, Problem, RecorderStatus, RecordingId,
+        ActivityDetails, Category, Codec, GameFlavor, LibraryEntry, MediaFacts, Outcome, Problem,
+        RecorderStatus, RecordingId,
     };
 
     pub(crate) fn entry(category: Category, title: &str, start_unix_ms: i64) -> LibraryEntry {
@@ -822,16 +821,14 @@ pub(crate) mod tests {
             media_path: PathBuf::from("/recordings/video.mkv"),
             sidecar_path: PathBuf::from("/recordings/video.json"),
             category,
-            flavor: GameFlavor::Retail,
+            flavor: GameFlavor::Poe2,
             title: title.to_owned(),
             start_unix_ms,
             duration_ms: 60_000,
-            outcome: Outcome::Win,
+            outcome: Outcome::Complete,
             protected: false,
             tag: None,
-            activity_hash: None,
             player: None,
-            combatants: Vec::new(),
             details: ActivityDetails::Manual,
             timeline: Vec::new(),
             media: MediaFacts {
@@ -861,13 +858,11 @@ pub(crate) mod tests {
         }
         AppSnapshot {
             entries: Arc::new(entries),
-            correlations: Arc::new(Vec::<CorrelatedActivity>::new()),
             category_counts,
             status,
             active: None,
             config,
             setup_problems: Vec::new(),
-            advanced_logging: Vec::new(),
             problems: Vec::new(),
             work: None,
             queued_jobs: 0,

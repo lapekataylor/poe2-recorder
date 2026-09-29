@@ -19,7 +19,7 @@ use poe_recorder::domain::{Category, RecorderStatus};
 use poe_recorder::storage::now_unix_ms;
 
 use super::status::elapsed_label;
-use super::{ActionSink, ShellAction, TEST_CATEGORIES};
+use super::{ActionSink, ShellAction};
 
 /// What the Manual toolbar shows, derived from one snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,11 +54,11 @@ pub fn manual_view(snapshot: &AppSnapshot) -> ManualView {
     }
 }
 
-/// Explanation shown in the test-recording chooser, matching the injected
-/// 5 s (raids 20 s) synthetic activities.
-pub const TEST_EXPLANATION: &str = "Runs a short synthetic activity to verify capture and \
-    saving. Most categories record for about 5 seconds; raids record for about 20. The result \
-    appears in the library like a real recording. Force end stops it early.";
+/// Explanation shown in the test-recording dialog, matching the 5 s
+/// simulated map run.
+pub const TEST_EXPLANATION: &str = "Records a short simulated map run to verify capture and \
+    saving. It records for about 5 seconds and appears under Map runs like a real recording, \
+    with one death marker. Force end stops it early.";
 
 /// The Manual category toolbar. Sounds follow `manual.sound` using the
 /// display bell on start/stop/failed-start transitions.
@@ -196,14 +196,10 @@ fn bell(widget: &impl IsA<gtk4::Widget>) {
     }
 }
 
-/// The window-menu/Settings test-recording chooser: category list, duration
-/// explanation, and one Start that sends `RunTest`.
+/// The window-menu/Settings test-recording dialog: an explanation and one
+/// Start that sends `RunTest`.
 pub fn present_test_dialog(parent: &gtk4::Widget, sink: ActionSink, ready: bool) {
     let dialog = adw::AlertDialog::new(Some("Test recording"), Some(TEST_EXPLANATION));
-    let labels: Vec<&str> = TEST_CATEGORIES.iter().map(|(_, label, _)| *label).collect();
-    let combo = gtk4::DropDown::from_strings(&labels);
-    combo.set_tooltip_text(Some("Test recording category"));
-    dialog.set_extra_child(Some(&combo));
     dialog.add_responses(&[("cancel", "Cancel"), ("start", "Start test")]);
     dialog.set_response_appearance("start", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("start"));
@@ -215,11 +211,7 @@ pub fn present_test_dialog(parent: &gtk4::Widget, sink: ActionSink, ready: bool)
         ));
     }
     dialog.connect_response(Some("start"), move |_, _| {
-        if let Some((category, _, _)) = TEST_CATEGORIES.get(combo.selected() as usize) {
-            sink(ShellAction::Command(Command::RunTest {
-                category: category.clone(),
-            }));
-        }
+        sink(ShellAction::Command(Command::RunTest));
     });
     dialog.present(Some(parent));
 }
@@ -479,12 +471,12 @@ mod tests {
             ),
             (
                 RecorderStatus::Ready,
-                Category::Raids,
+                Category::MapRuns,
                 true,
                 (false, true, false),
             ),
             (
-                RecorderStatus::WaitingForWow,
+                RecorderStatus::WaitingForCapture,
                 Category::Manual,
                 true,
                 (true, false, false),
@@ -514,8 +506,8 @@ mod tests {
 
         // An automatic recording in progress never shows manual Stop.
         let automatic = RecorderStatus::Recording {
-            category: Category::Raids,
-            title: "Boss".to_owned(),
+            category: Category::MapRuns,
+            title: "Bluff".to_owned(),
             started_unix_ms: 42,
             manual: false,
             test: false,

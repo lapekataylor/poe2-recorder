@@ -1,13 +1,38 @@
 # Changelog
 
-Notable changes to the native Linux/Wayland application. The format follows
+Notable changes to PoE Recorder. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Release history before the native rewrite belongs to the upstream Electron
-project, [aza547/wow-recorder](https://github.com/aza547/wow-recorder).
+PoE Recorder is based on Warcraft Recorder's native Linux/Wayland port,
+[JohanWes/wow-recorder-linuxwayland](https://github.com/JohanWes/wow-recorder-linuxwayland),
+whose history follows the 0.1.0 entry below. Earlier history belongs to the
+upstream Electron project,
+[aza547/wow-recorder](https://github.com/aza547/wow-recorder).
 
-## Unreleased
+## 0.1.0 - 2026-09-29
+
+### Added
+- Automatic recording of Path of Exile 2 map runs from `Client.txt`: a run
+  starts on entering a map, survives trips to the hideout within a grace
+  period (5 minutes by default), and treats Abyss and similar sub-areas as
+  part of the map.
+- Death markers and "Out of the map" spans on the timeline.
+- Map-run videos are cut five seconds after the player last left the map.
+- A map in progress when the app starts is recorded at once.
+- Map runs library section with map, area level and death columns.
+
+### Changed
+- Renamed to PoE Recorder (`io.github.lapekataylor.PoeRecorder`).
+- Test recordings simulate a short map run.
+
+### Removed
+- World of Warcraft support: combat-log parsing, raid, dungeon, arena and
+  battleground categories, advanced-combat-logging checks, the combat meter,
+  the spell database, multi-viewpoint grouping, and importing Warcraft
+  Recorder's Electron-era recordings.
+
+## Warcraft Recorder for Linux, unreleased
 
 ### Fixed
 - The damage meter's right-click menu shows its Target entry in full instead

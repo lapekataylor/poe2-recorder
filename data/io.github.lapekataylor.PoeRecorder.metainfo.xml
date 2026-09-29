@@ -35,61 +35,14 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="1.0.11" date="2026-09-26">
+    <release version="0.1.0" date="2026-09-29">
       <description>
         <p>
-          Much lighter and snappier: the app uses far less memory at idle
-          and in the tray, starts faster, and the download is smaller. The
-          library keeps focus and selection across refreshes, the combat
-          meter animates smoothly, and busy state is shown as toasts. A raid
-          pull or Mythic+ run that started while the previous activity was
-          still ending is now recorded instead of dropped, and several
-          capture, cleanup and memory-leak issues are fixed.
-        </p>
-      </description>
-    </release>
-    <release version="1.0.10" date="2026-09-09">
-      <description>
-        <p>
-          The combat meter gains a Buffs tab showing each player's buff
-          uptime during a pull, and buffs now show their icons instead of
-          being lumped into an "Other" row. Start-up and large libraries
-          are noticeably faster: scanning a big library and actions like
-          tagging or protecting many recordings at once no longer stall
-          the app.
-        </p>
-      </description>
-    </release>
-    <release version="1.0.9" date="2026-09-06">
-      <description>
-        <p>
-          Fixed seek and playback reliability: a seek issued during video
-          preroll no longer wedges all later seeks, and scrubbing back past
-          the first cast of a selected meter spell no longer crashes the app.
-          A second launch of the app no longer moves the running instance's
-          active recording into Recovery. Library, meter, and history
-          rendering is substantially faster on large libraries.
-        </p>
-      </description>
-    </release>
-    <release version="1.0.8" date="2026-09-03">
-      <description>
-        <p>
-          Fixed screen-capture reliability: captures that begin and end in the
-          same moment no longer desynchronize the recorder toggle, and a
-          capture that produces no video file now replaces the recorder so the
-          next recording still saves.
-        </p>
-      </description>
-    </release>
-    <release version="1.0.7" date="2026-08-21">
-      <description>
-        <p>
-          Added a detailed local combat meter alongside each recording, with
-          current-fight and overall views for damage, healing, utility, casts,
-          and deaths; player spell and target breakdowns; and direct seeking
-          into the video. Combat logs carrying the newer UTC-offset timestamp
-          suffix are now parsed correctly.
+          First release of PoE Recorder. Path of Exile 2 map runs are
+          recorded automatically from the game's Client.txt, with portal
+          trips kept in one video, death markers, and the hideout time
+          after the run cut off. The World of Warcraft support of Warcraft
+          Recorder, which this is based on, is removed.
         </p>
       </description>
     </release>

@@ -6,8 +6,8 @@
 //!
 //! Model pipeline (GTK-native, no bespoke collection):
 //!
-//! `gio::ListStore` (one boxed row per correlated activity of the selected
-//! category, newest first) → `FilterListModel` (chips + date) → `SortListModel`
+//! `gio::ListStore` (one boxed row per recording of the selected category,
+//! newest first) → `FilterListModel` (chips + date) → `SortListModel`
 //! (the column-view sorter) → `MultiSelection` → `ColumnView`.
 //!
 //! Row data is immutable `Rc<RowModel>` wrapped in `glib::BoxedAnyObject`; the
@@ -28,7 +28,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use poe_recorder::coordinator::{AppSnapshot, Command};
-use poe_recorder::domain::{ActivityDetails, Category, LibraryEntry, Outcome, RecordingId};
+use poe_recorder::domain::{ActivityDetails, Category, LibraryEntry, RecordingId};
 
 use super::filters::{self, Chip};
 use super::{ActionSink, LayoutStore, ShellAction};
@@ -39,8 +39,6 @@ const MAX_VISIBLE_SUGGESTIONS: usize = 100;
 #[derive(Clone, Debug)]
 pub struct Selection {
     pub id: RecordingId,
-    /// Correlated local POV ids (primary first) for the viewpoint selector.
-    pub viewpoints: Vec<RecordingId>,
 }
 
 /// Column families: the selected category maps to one family, which decides
@@ -48,9 +46,6 @@ pub struct Selection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Family {
     MapRun,
-    Raid,
-    Dungeon,
-    Pvp,
     Clip,
     Manual,
 }
@@ -58,14 +53,6 @@ enum Family {
 fn family_of(category: &Category) -> Family {
     match category {
         Category::MapRuns => Family::MapRun,
-        Category::Raids => Family::Raid,
-        Category::MythicPlus => Family::Dungeon,
-        Category::TwoVTwo
-        | Category::ThreeVThree
-        | Category::FiveVFive
-        | Category::Skirmish
-        | Category::SoloShuffle
-        | Category::Battlegrounds => Family::Pvp,
         Category::Clip => Family::Clip,
         Category::Manual => Family::Manual,
     }
@@ -77,30 +64,20 @@ fn family_of(category: &Category) -> Family {
 struct RowModel {
     id: RecordingId,
     media_path: PathBuf,
-    /// Primary + correlated POV ids, the target of protect/delete.
-    correlated_ids: Vec<RecordingId>,
+    /// The recordings protect/delete act on: this row's own.
+    target_ids: Vec<RecordingId>,
     protected: bool,
     all_protected: bool,
     tag: Option<String>,
     details: String,
-    result: String,
     date_ms: i64,
     duration_ms: u64,
     // Family-specific display fields; only the family's columns read them.
-    encounter: String,
     place: String,
-    pull: String,
-    difficulty: String,
-    difficulty_order: u8,
     level: i64,
-    affixes: String,
+    deaths: i64,
     kind: String,
     source: String,
-    outcome_order: u8,
-    /// The recording player's class CSS class (from spec id), for the
-    /// class-colored Details name.
-    class_css: Option<&'static str>,
-    /// Union of suggestion chips across primary + POVs, for AND filtering.
     combined: BTreeSet<Chip>,
 }
 
@@ -109,38 +86,6 @@ fn row_of(item: &glib::Object) -> Rc<RowModel> {
         .expect("library rows are BoxedAnyObject")
         .borrow::<Rc<RowModel>>()
         .clone()
-}
-
-fn outcome_rank(outcome: Outcome) -> u8 {
-    match outcome {
-        Outcome::Win | Outcome::Complete => 0,
-        Outcome::Loss | Outcome::Abandoned => 1,
-        Outcome::Unknown => 2,
-    }
-}
-
-fn difficulty_rank(id: Option<u32>) -> u8 {
-    match id {
-        Some(17) => 0, // LFR
-        Some(14) => 1, // Normal
-        Some(15) => 2, // Heroic
-        Some(16) => 3, // Mythic
-        _ => 4,
-    }
-}
-
-fn raid_difficulty_label(id: Option<u32>, stored: Option<&str>) -> String {
-    if let Some(stored) = stored.filter(|value| !value.is_empty()) {
-        return stored.to_owned();
-    }
-    match id {
-        Some(17) => "LFR",
-        Some(14) => "Normal",
-        Some(15) => "Heroic",
-        Some(16) => "Mythic",
-        _ => "",
-    }
-    .to_owned()
 }
 
 fn format_duration(ms: u64) -> String {
@@ -160,6 +105,7 @@ fn format_date(unix_ms: i64) -> String {
         .unwrap_or_default()
 }
 
+/// The Details column: the character when known, else the title.
 fn details_line(entry: &LibraryEntry) -> String {
     match &entry.player {
         Some(player) if !player.name.is_empty() => player.name.clone(),
@@ -167,128 +113,31 @@ fn details_line(entry: &LibraryEntry) -> String {
     }
 }
 
-fn result_label(entry: &LibraryEntry, family: Family) -> String {
-    match (&entry.details, family) {
-        (ActivityDetails::Raid { .. }, _) => match entry.outcome {
-            Outcome::Win => "Kill",
-            _ => "Wipe",
-        }
-        .to_owned(),
-        (ActivityDetails::Dungeon { upgrade_level, .. }, _) => {
-            if entry.outcome != Outcome::Complete {
-                "Abandoned".to_owned()
-            } else if upgrade_level.is_some_and(|level| level > 0) {
-                format!("Timed +{}", upgrade_level.unwrap_or(0))
-            } else {
-                "Depleted".to_owned()
-            }
-        }
-        (
-            ActivityDetails::SoloRounds {
-                rounds_won,
-                rounds_played,
-                ..
-            },
-            _,
-        ) => match (rounds_won, rounds_played) {
-            (Some(won), Some(played)) => format!("{won}/{played}"),
-            _ => win_loss(entry.outcome),
-        },
-        _ => win_loss(entry.outcome),
-    }
-}
-
-fn win_loss(outcome: Outcome) -> String {
-    match outcome {
-        Outcome::Win => "Win",
-        Outcome::Loss => "Loss",
-        _ => "",
-    }
-    .to_owned()
-}
-
-fn affixes_label(affixes: &[u32]) -> String {
-    affixes
-        .iter()
-        .map(|id| filters::affix_name(*id).unwrap_or_else(|| id.to_string()))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Build one row per correlated activity of `category`, newest first.
+/// Build one row per recording of `category`, newest first.
 fn build_rows(snapshot: &AppSnapshot, category: &Category) -> Vec<Rc<RowModel>> {
-    let by_id: HashMap<&RecordingId, &LibraryEntry> = snapshot
+    let family = family_of(category);
+    let mut rows: Vec<Rc<RowModel>> = snapshot
         .entries
         .iter()
-        .map(|entry| (&entry.id, entry))
-        .collect();
-    let family = family_of(category);
-
-    let mut rows: Vec<Rc<RowModel>> = snapshot
-        .correlations
-        .iter()
-        .filter(|correlation| {
-            by_id
-                .get(&correlation.primary_id)
-                .is_some_and(|entry| &entry.category == category)
-        })
-        .map(|correlation| {
-            let primary = by_id
-                .get(&correlation.primary_id)
-                .copied()
-                .expect("correlation primary is in the snapshot");
-            let povs: Vec<&LibraryEntry> = correlation
-                .local_pov_ids
-                .iter()
-                .filter_map(|id| by_id.get(id).copied())
-                .collect();
-
-            let mut correlated_ids = vec![primary.id.clone()];
-            correlated_ids.extend(correlation.local_pov_ids.iter().cloned());
-
-            let all_protected = primary.protected && povs.iter().all(|entry| entry.protected);
-            let combined =
-                filters::combined_suggestions(std::iter::once(primary).chain(povs.iter().copied()));
-
-            let (
-                encounter,
-                place,
-                pull,
-                difficulty,
-                difficulty_order,
-                level,
-                affixes,
-                kind,
-                source,
-            ) = category_fields(primary, family);
-
+        .filter(|entry| &entry.category == category)
+        .map(|entry| {
+            let fields = category_fields(entry, family);
             Rc::new(RowModel {
-                id: primary.id.clone(),
-                media_path: primary.media_path.clone(),
-                correlated_ids,
-                protected: primary.protected,
-                all_protected,
-                tag: primary.tag.clone(),
-                details: details_line(primary),
-                result: result_label(primary, family),
-                date_ms: primary.start_unix_ms,
-                duration_ms: primary.duration_ms,
-                encounter,
-                place,
-                pull,
-                difficulty,
-                difficulty_order,
-                level,
-                affixes,
-                kind,
-                source,
-                outcome_order: outcome_rank(primary.outcome),
-                class_css: primary
-                    .player
-                    .as_ref()
-                    .and_then(|player| player.spec_id)
-                    .and_then(filters::class_css_class),
-                combined,
+                id: entry.id.clone(),
+                media_path: entry.media_path.clone(),
+                target_ids: vec![entry.id.clone()],
+                protected: entry.protected,
+                all_protected: entry.protected,
+                tag: entry.tag.clone(),
+                details: details_line(entry),
+                date_ms: entry.start_unix_ms,
+                duration_ms: entry.duration_ms,
+                place: fields.place,
+                level: fields.level,
+                deaths: fields.deaths,
+                kind: fields.kind,
+                source: fields.source,
+                combined: filters::combined_suggestions([entry]),
             })
         })
         .collect();
@@ -298,29 +147,17 @@ fn build_rows(snapshot: &AppSnapshot, category: &Category) -> Vec<Rc<RowModel>> 
     rows
 }
 
-type CategoryFields = (
-    String,
-    String,
-    String,
-    String,
-    u8,
-    i64,
-    String,
-    String,
-    String,
-);
+#[derive(Default)]
+struct CategoryFields {
+    place: String,
+    level: i64,
+    deaths: i64,
+    kind: String,
+    source: String,
+}
 
 fn category_fields(entry: &LibraryEntry, family: Family) -> CategoryFields {
-    let mut encounter = String::new();
-    let mut place = String::new();
-    let mut pull = String::new();
-    let mut difficulty = String::new();
-    let mut difficulty_order = 4;
-    let mut level = 0;
-    let mut affixes = String::new();
-    let mut kind = String::new();
-    let mut source = String::new();
-
+    let mut fields = CategoryFields::default();
     match (&entry.details, family) {
         (
             ActivityDetails::MapRun {
@@ -331,48 +168,9 @@ fn category_fields(entry: &LibraryEntry, family: Family) -> CategoryFields {
             },
             Family::MapRun,
         ) => {
-            place = map_name.clone();
-            level = i64::from(*area_level);
-            // The deaths column reuses the pull slot: a number sorted as one.
-            pull = deaths.to_string();
-        }
-        (
-            ActivityDetails::Raid {
-                zone_name,
-                encounter_name,
-                difficulty_id,
-                difficulty: stored,
-                pull: pull_number,
-                ..
-            },
-            Family::Raid,
-        ) => {
-            encounter = encounter_name.clone().unwrap_or_default();
-            place = zone_name.clone().unwrap_or_default();
-            pull = pull_number
-                .map(|value| value.to_string())
-                .unwrap_or_default();
-            difficulty = raid_difficulty_label(*difficulty_id, stored.as_deref());
-            difficulty_order = difficulty_rank(*difficulty_id);
-        }
-        (
-            ActivityDetails::Dungeon {
-                dungeon_name,
-                keystone_level,
-                affixes: affix_ids,
-                ..
-            },
-            Family::Dungeon,
-        ) => {
-            place = dungeon_name.clone().unwrap_or_default();
-            level = keystone_level.map(i64::from).unwrap_or(0);
-            affixes = affixes_label(affix_ids);
-        }
-        (ActivityDetails::ArenaOrBattleground { map_name, .. }, Family::Pvp) => {
-            place = map_name.clone().unwrap_or_default();
-        }
-        (ActivityDetails::SoloRounds { map_name, .. }, Family::Pvp) => {
-            place = map_name.clone().unwrap_or_default();
+            fields.place = map_name.clone();
+            fields.level = i64::from(*area_level);
+            fields.deaths = i64::from(*deaths);
         }
         (
             ActivityDetails::Clip {
@@ -382,26 +180,15 @@ fn category_fields(entry: &LibraryEntry, family: Family) -> CategoryFields {
             },
             Family::Clip,
         ) => {
-            kind = super::category_label(source_category).to_owned();
-            source = source_title.clone().unwrap_or_default();
+            fields.kind = super::category_label(source_category).to_owned();
+            fields.source = source_title.clone().unwrap_or_default();
         }
         (_, Family::Manual) => {
-            kind = "Manual".to_owned();
+            fields.kind = "Manual".to_owned();
         }
         _ => {}
     }
-
-    (
-        encounter,
-        place,
-        pull,
-        difficulty,
-        difficulty_order,
-        level,
-        affixes,
-        kind,
-        source,
-    )
+    fields
 }
 
 /// Shared mutable view state referenced by every widget callback.
@@ -421,11 +208,10 @@ struct State {
     menu_target: RefCell<Option<RecordingId>>,
     /// Primary ids of a delete in flight, to report how many went.
     deleting: RefCell<Vec<RecordingId>>,
-    /// The authoritative index objects used to build the current rows.  Status
-    /// and progress snapshots reuse these Arcs, so retaining them lets the GTK
-    /// thread avoid rebuilding row metadata for unrelated updates.
+    /// The authoritative index the current rows were built from. Status and
+    /// progress snapshots reuse this Arc, so retaining it lets the GTK thread
+    /// avoid rebuilding row metadata for unrelated updates.
     entries: RefCell<Option<Arc<Vec<LibraryEntry>>>>,
-    correlations: RefCell<Option<Arc<Vec<poe_recorder::domain::CorrelatedActivity>>>>,
 }
 
 pub struct Library {
@@ -634,7 +420,6 @@ impl Library {
                 menu_target: RefCell::new(None),
                 deleting: RefCell::new(Vec::new()),
                 entries: RefCell::new(None),
-                correlations: RefCell::new(None),
             },
         });
 
@@ -925,10 +710,7 @@ impl Inner {
         // Load the sole selection into the player; multiselect does not load.
         if count == 1 {
             let row = &selected[0];
-            (self.on_select)(Some(Selection {
-                id: row.id.clone(),
-                viewpoints: row.correlated_ids.clone(),
-            }));
+            (self.on_select)(Some(Selection { id: row.id.clone() }));
         }
         self.update_bulk_bar(&selected);
     }
@@ -1019,7 +801,7 @@ impl Inner {
         // A single-row star applies to that activity's viewpoints, using the
         // same all-protected toggle rule as the bulk bar.
         self.send_mutation(Command::SetProtected {
-            ids: row.correlated_ids.clone(),
+            ids: row.target_ids.clone(),
             value: !row.all_protected,
         })
     }
@@ -1088,13 +870,7 @@ impl Inner {
             .entries
             .borrow()
             .as_ref()
-            .is_none_or(|entries| !Arc::ptr_eq(entries, &snapshot.entries))
-            || self
-                .state
-                .correlations
-                .borrow()
-                .as_ref()
-                .is_none_or(|correlations| !Arc::ptr_eq(correlations, &snapshot.correlations));
+            .is_none_or(|entries| !Arc::ptr_eq(entries, &snapshot.entries));
         if !category_changed && !index_changed {
             // Progress, recorder-state, and active-timeline snapshots do not
             // change the library.  In particular, do not rebuild suggestion
@@ -1103,7 +879,6 @@ impl Inner {
             return;
         }
         *self.state.entries.borrow_mut() = Some(Arc::clone(&snapshot.entries));
-        *self.state.correlations.borrow_mut() = Some(Arc::clone(&snapshot.correlations));
         if index_changed {
             self.report_deleted(snapshot);
         }
@@ -1266,66 +1041,9 @@ impl Inner {
                 columns.push(text_column(
                     "Deaths",
                     false,
-                    |r| r.pull.clone(),
-                    sort_by(|r| r.pull.parse::<i64>().unwrap_or(0)),
+                    |r| r.deaths.to_string(),
+                    sort_by(|r| r.deaths),
                 ));
-                columns.push(self.duration_column());
-                columns.push(self.date_column());
-            }
-            Family::Raid => {
-                columns.push(text_column(
-                    "Encounter",
-                    true,
-                    |r| r.encounter.clone(),
-                    sort_by(|r| r.encounter.clone()),
-                ));
-                columns.push(result_column());
-                columns.push(text_column(
-                    "Pull",
-                    false,
-                    |r| r.pull.clone(),
-                    sort_by(|r| r.pull.parse::<i64>().unwrap_or(0)),
-                ));
-                columns.push(text_column(
-                    "Difficulty",
-                    false,
-                    |r| r.difficulty.clone(),
-                    sort_by(|r| r.difficulty_order),
-                ));
-                columns.push(self.duration_column());
-                columns.push(self.date_column());
-            }
-            Family::Dungeon => {
-                columns.push(text_column(
-                    "Dungeon",
-                    true,
-                    |r| r.place.clone(),
-                    sort_by(|r| r.place.clone()),
-                ));
-                columns.push(result_column());
-                columns.push(text_column(
-                    "Level",
-                    false,
-                    level_label,
-                    sort_by(|r| r.level),
-                ));
-                columns.push(text_column(
-                    "Affixes",
-                    false,
-                    |r| r.affixes.clone(),
-                    sort_by(|r| r.affixes.clone()),
-                ));
-                columns.push(self.duration_column());
-                columns.push(self.date_column());
-            }
-            Family::Pvp => {
-                columns.push(text_column(
-                    "Map",
-                    true,
-                    |r| r.place.clone(),
-                    sort_by(|r| r.place.clone()),
-                ));
-                columns.push(result_column());
                 columns.push(self.duration_column());
                 columns.push(self.date_column());
             }
@@ -1467,8 +1185,6 @@ impl Inner {
             let tag = title.next_sibling().and_downcast::<gtk4::Label>().unwrap();
             let row = row_of(&item.item().unwrap());
             title.set_text(&row.details);
-            // The title carries no other classes, so this swaps the class color.
-            title.set_css_classes(row.class_css.as_slice());
             match &row.tag {
                 Some(value) => {
                     tag.set_text(value);
@@ -1562,7 +1278,7 @@ impl State {
 fn viewpoint_ids(rows: &[Rc<RowModel>]) -> Vec<RecordingId> {
     let mut ids = Vec::new();
     for row in rows {
-        for id in &row.correlated_ids {
+        for id in &row.target_ids {
             if !ids.contains(id) {
                 ids.push(id.clone());
             }
@@ -1601,14 +1317,6 @@ fn protect_label(all_protected: bool) -> &'static str {
 
 fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
-}
-
-fn level_label(row: &RowModel) -> String {
-    if row.level > 0 {
-        format!("+{}", row.level)
-    } else {
-        String::new()
-    }
 }
 
 fn day_start_ms(date: &glib::DateTime) -> i64 {
@@ -1659,37 +1367,6 @@ fn text_column(
     column.set_expand(expand);
     column.set_resizable(true);
     column.set_sorter(Some(&sorter));
-    column
-}
-
-/// The Result column: same text cell as `text_column`, plus a win/loss outcome
-/// color (the label conveys the meaning; color is reinforcement only).
-fn result_column() -> gtk4::ColumnViewColumn {
-    let factory = gtk4::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
-        let label = gtk4::Label::new(None);
-        label.set_xalign(0.0);
-        label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        item.downcast_ref::<gtk4::ListItem>()
-            .unwrap()
-            .set_child(Some(&label));
-    });
-    factory.connect_bind(move |_, item| {
-        let item = item.downcast_ref::<gtk4::ListItem>().unwrap();
-        let label = item.child().and_downcast::<gtk4::Label>().unwrap();
-        let row = row_of(&item.item().unwrap());
-        label.set_text(&row.result);
-        label.remove_css_class("wr-result-win");
-        label.remove_css_class("wr-result-loss");
-        match row.outcome_order {
-            0 => label.add_css_class("wr-result-win"),
-            1 => label.add_css_class("wr-result-loss"),
-            _ => {}
-        }
-    });
-    let column = gtk4::ColumnViewColumn::new(Some("Result"), Some(factory));
-    column.set_resizable(true);
-    column.set_sorter(Some(&sort_by(|r| r.outcome_order)));
     column
 }
 

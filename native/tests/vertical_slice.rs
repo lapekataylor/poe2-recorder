@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Headless vertical slice: config, log polling, activity detection, recorder
-//! control, storage, and media jobs behind the real coordinator.
+//! Headless vertical slice: config, `Client.txt` polling, map-run detection,
+//! recorder control, storage, and media jobs behind the real coordinator.
 //!
 //! The recorder and FFmpeg are replaced by shell fakes; every
 //! other type is the production one operating on a temp directory. The
@@ -23,19 +23,13 @@ use poe_recorder::config::{
 };
 use poe_recorder::coordinator::{AppSnapshot, ClipRange, Command, Coordinator, Setup, start};
 use poe_recorder::domain::{
-    Category, MeterFight, MeterMetric, Outcome, RecorderStatus, StorageLimit, TimelineKind,
+    ActivityDetails, Category, Outcome, RecorderStatus, StorageLimit, TimelineKind,
 };
 use poe_recorder::media_jobs::MediaConfig;
-use poe_recorder::meter::{MeterProjection, project_current, project_overall};
 use poe_recorder::recorder::Timeouts;
-use poe_recorder::storage::{RECOVERY_DIR, load_meter, now_unix_ms};
+use poe_recorder::storage::{RECOVERY_DIR, now_unix_ms};
 
-const PLAYER_GUID: &str = "Player-1092-0A70E103";
-const PLAYER_NAME: &str = "Testplayer-Testrealm";
-/// Hostile boss the player's spells land on; its flags are not friendly.
-const BOSS_GUID: &str = "Creature-0-3013-2820-74284-0000266503";
-const BOSS_FLAGS: &str = "0x10a48";
-const SELF_FLAGS: &str = "0x511";
+const PLAYER_NAME: &str = "TestExile";
 /// Long enough for real process spawns and FFmpeg fakes, short enough to fail
 /// fast. Nothing is asserted about how long a step actually takes.
 const STEP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -83,7 +77,7 @@ impl Harness {
         harness.pump(|snapshot| {
             !matches!(
                 snapshot.status,
-                RecorderStatus::SetupRequired | RecorderStatus::WaitingForWow
+                RecorderStatus::SetupRequired | RecorderStatus::WaitingForCapture
             )
         });
         harness
@@ -185,7 +179,6 @@ fn setup(root: &Path) -> Setup {
             finalize_grace: Duration::from_secs(5),
             sigint_grace: Duration::from_millis(300),
         },
-        year: current_year(),
         recorder_timeouts: Timeouts {
             arm_stability: Duration::from_millis(150),
             replay_event: Duration::from_millis(400),
@@ -204,17 +197,17 @@ fn setup(root: &Path) -> Setup {
     }
 }
 
-/// A fresh temp tree: empty directories, an empty combat log, and a config
+/// A fresh temp tree: empty directories, an empty `Client.txt`, and a config
 /// pointing at them.
 fn spawn_tree(name: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!("wr-slice-{name}-{}", uuid::Uuid::new_v4()));
     let library = root.join("recordings with space");
     let capture_root = root.join("buffer");
-    let log_dir = root.join("wow/_retail_/Logs");
+    let log_dir = root.join("Path of Exile 2/logs");
     for directory in [&library, &capture_root, &log_dir] {
         fs::create_dir_all(directory).unwrap();
     }
-    let log_file = log_dir.join("WoWCombatLog.txt");
+    let log_file = log_dir.join("Client.txt");
     fs::write(&log_file, b"").unwrap();
     write_config(&root, &library, &capture_root, &log_dir);
     (root, library, capture_root, log_file)
@@ -229,17 +222,14 @@ fn fixture_bin(name: &str) -> PathBuf {
 fn write_config(root: &Path, library: &Path, capture_root: &Path, log_dir: &Path) {
     let config = Config {
         flavors: poe_recorder::config::FlavorSettings {
-            retail: FlavorConfig {
+            poe2: FlavorConfig {
                 enabled: true,
                 log_dir: AuthorizedPath::authorized(log_dir),
             },
-            ..Default::default()
         },
+        // Leaving a map ends the run on the next poll.
         activities: ActivitySettings {
-            min_raid_duration_seconds: 0,
-            raid_overrun_seconds: 0,
-            dungeon_overrun_seconds: 0,
-            ..Default::default()
+            map_grace_seconds: 0,
         },
         storage: StorageSettings {
             recording_dir: AuthorizedPath::authorized(library),
@@ -263,13 +253,11 @@ fn write_config(root: &Path, library: &Path, capture_root: &Path, log_dir: &Path
 fn empty_snapshot() -> AppSnapshot {
     AppSnapshot {
         entries: Arc::new(Vec::new()),
-        correlations: Arc::new(Vec::new()),
         category_counts: Vec::new(),
         status: RecorderStatus::SetupRequired,
         active: None,
         config: Config::default(),
         setup_problems: Vec::new(),
-        advanced_logging: Vec::new(),
         problems: Vec::new(),
         work: None,
         queued_jobs: 0,
@@ -278,26 +266,19 @@ fn empty_snapshot() -> AppSnapshot {
     }
 }
 
-// --- Combat-log helpers ---
+// --- Client.txt helpers ---
 
-/// `M/D HH:MM:SS.mmm` in UTC, matching the harness's zero UTC offset.
+/// `YYYY/MM/DD HH:MM:SS` in UTC, matching the harness's zero UTC offset.
 fn stamp(unix_ms: i64) -> String {
     let days = unix_ms.div_euclid(86_400_000);
     let ms_of_day = unix_ms.rem_euclid(86_400_000);
-    let (_, month, day) = civil_from_days(days);
+    let (year, month, day) = civil_from_days(days);
     format!(
-        "{}/{} {:02}:{:02}:{:02}.{:03}",
-        month,
-        day,
+        "{year}/{month:02}/{day:02} {:02}:{:02}:{:02}",
         ms_of_day / 3_600_000,
         (ms_of_day / 60_000) % 60,
         (ms_of_day / 1_000) % 60,
-        ms_of_day % 1_000
     )
-}
-
-fn current_year() -> i32 {
-    civil_from_days(now_unix_ms().div_euclid(86_400_000)).0
 }
 
 /// Howard Hinnant's `civil_from_days`, the inverse of the parser's conversion.
@@ -314,128 +295,81 @@ fn civil_from_days(days: i64) -> (i32, i64, i64) {
     ((year + i64::from(month <= 2)) as i32, month, day)
 }
 
-fn line(at_ms: i64, payload: &str) -> String {
-    format!("{}  {payload}", stamp(at_ms))
+/// Whole seconds `ago_seconds` before now: log times have no milliseconds.
+fn seconds_ago(ago_seconds: i64) -> i64 {
+    (now_unix_ms().div_euclid(1_000) - ago_seconds) * 1_000
 }
 
-/// The combatant plus self-cast pair every activity needs before its metadata
-/// is complete.
-fn player_lines(at_ms: i64) -> Vec<String> {
-    vec![
-        line(
-            at_ms,
-            &format!(
-                "COMBATANT_INFO,{PLAYER_GUID},0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,577"
-            ),
-        ),
-        line(
-            at_ms,
-            &format!(
-                "SPELL_AURA_APPLIED,{PLAYER_GUID},\"{PLAYER_NAME}\",{SELF_FLAGS},0x0,\
-                 {PLAYER_GUID},\"{PLAYER_NAME}\",{SELF_FLAGS},0x0,1,\"Test Aura\",0x1,BUFF"
-            ),
-        ),
-    ]
-}
-
-fn raid_start(at_ms: i64) -> Vec<String> {
-    let mut lines = vec![
-        line(
-            at_ms,
-            "COMBAT_LOG_VERSION,22,ADVANCED_LOG_ENABLED,1,BUILD_VERSION,12.1.0,PROJECT_ID,1",
-        ),
-        line(at_ms, "ENCOUNTER_START,2820,\"Test Encounter\",16,20,2549"),
-    ];
-    lines.extend(player_lines(at_ms));
-    lines
-}
-
-fn raid_end(at_ms: i64, success: bool) -> String {
-    line(
-        at_ms,
-        &format!(
-            "ENCOUNTER_END,2820,\"Test Encounter\",16,20,{}",
-            u8::from(success)
-        ),
+fn area(at_ms: i64, area_id: &str, seed: u64) -> String {
+    format!(
+        "{} 1000 2caa229f [DEBUG Client 312] Generating level 80 area \"{area_id}\" with seed {seed}",
+        stamp(at_ms)
     )
+}
+
+fn enter_map(at_ms: i64, seed: u64) -> String {
+    area(at_ms, "MapHiddenGrotto", seed)
+}
+
+fn hideout(at_ms: i64) -> String {
+    area(at_ms, "HideoutShoreline", 1)
 }
 
 fn player_death(at_ms: i64) -> String {
-    line(
-        at_ms,
-        &format!(
-            "UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,\
-             {PLAYER_GUID},\"{PLAYER_NAME}\",{SELF_FLAGS},0x0"
-        ),
-    )
-}
-
-/// The player's spell on the hostile boss in the retail advanced-block shape.
-/// The tiny HP values keep the destination below the boss-health floor, so the
-/// existing boss-health behavior is untouched.
-fn spell_damage(at_ms: i64) -> String {
-    line(
-        at_ms,
-        &format!(
-            "SPELL_DAMAGE,{PLAYER_GUID},\"{PLAYER_NAME}\",{SELF_FLAGS},0x0,{BOSS_GUID},\"Test Boss\",\
-             {BOSS_FLAGS},0x0,585,\"Smite\",0x2,{BOSS_GUID},0000000000000000,105,152,0,0,189,2084,0,0,0,\
-             0,0,0,0,0,0,0,0,1500,0,2,0,0,0,1,0,0,0,0.000,1,1"
-        ),
-    )
-}
-
-/// A self-heal in the modern suffix layout; 400 of the 1000 points overheat.
-fn spell_heal(at_ms: i64) -> String {
-    line(
-        at_ms,
-        &format!(
-            "SPELL_HEAL,{PLAYER_GUID},\"{PLAYER_NAME}\",{SELF_FLAGS},0x0,{PLAYER_GUID},\"{PLAYER_NAME}\",\
-             {SELF_FLAGS},0x0,2061,\"Flash Heal\",0x2,{PLAYER_GUID},0000000000000000,500,500,0,0,0,0,0,0,0,0,\
-             0,0,0,0,0,0,0,1000,600,400,0,1"
-        ),
+    format!(
+        "{} 1000 3ef23348 [INFO Client 312] : {PLAYER_NAME} has been slain.",
+        stamp(at_ms)
     )
 }
 
 // --- Scenarios ---
 
 #[test]
-fn automatic_raid_completes_and_survives_a_restart() {
-    let mut harness = Harness::new("raid");
+fn automatic_map_run_completes_and_survives_a_restart() {
+    let mut harness = Harness::new("map-run");
     assert_eq!(harness.latest.status, RecorderStatus::Ready);
 
-    let start_ms = now_unix_ms() - 2_000;
-    harness.log(&raid_start(start_ms));
+    let start_ms = seconds_ago(2);
+    harness.log(&[enter_map(start_ms, 7)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     let active = harness.latest.active.clone().unwrap();
-    // Detection is the encounter start itself, so the request is the extra
-    // lead-in alone, clamped to the buffer.
-    assert_eq!(active.requested_replay_ms, 10_000);
-    assert_eq!(active.category, Category::Raids);
+    // The request reaches back past the extra lead-in to the map entry.
+    assert!(active.requested_replay_ms >= 10_000);
+    assert_eq!(active.category, Category::MapRuns);
+    assert_eq!(active.title, "Hidden Grotto");
 
     harness.emit_artifacts(true);
-    harness.log(&[
-        spell_damage(start_ms + 250),
-        spell_heal(start_ms + 300),
-        spell_damage(start_ms + 1_250),
-    ]);
-    harness.log(&[player_death(start_ms + 1_500)]);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[player_death(start_ms + 1_000)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| !snapshot.entries.is_empty());
 
     let entry = harness.latest.entries[0].clone();
-    assert_eq!(entry.category, Category::Raids);
-    assert_eq!(entry.outcome, Outcome::Win);
+    assert_eq!(entry.category, Category::MapRuns);
+    assert_eq!(entry.outcome, Outcome::Complete);
+    assert_eq!(
+        entry.player.as_ref().map(|player| player.name.as_str()),
+        Some(PLAYER_NAME)
+    );
+    assert!(matches!(
+        entry.details,
+        ActivityDetails::MapRun {
+            area_level: 80,
+            seed: 7,
+            deaths: 1,
+            ..
+        }
+    ));
     assert!(entry.media_path.exists(), "media was not written");
     assert!(entry.sidecar_path.exists(), "sidecar was not written");
     // The replay is in front of the media, so the death sits later than its
-    // 500 ms activity offset and still inside the media.
+    // one-second run offset and still inside the media.
     let death = entry
         .timeline
         .iter()
         .find(|item| item.kind() == &TimelineKind::Death)
         .expect("death marker");
     assert!(
-        death.start_ms() > 500 && death.start_ms() <= entry.duration_ms,
+        death.start_ms() > 1_000 && death.start_ms() <= entry.duration_ms,
         "death at {} ms, duration {} ms",
         death.start_ms(),
         entry.duration_ms
@@ -443,54 +377,6 @@ fn automatic_raid_completes_and_survives_a_restart() {
     // The intermediates were consumed by finalization.
     assert!(read_dir_count(&harness.capture_root.join("replay")) == 0);
     assert!(read_dir_count(&harness.capture_root.join("regular")) == 0);
-    // The version-22 advanced-layout events survived parsing into per-second
-    // deltas while retaining their exact full-fight aggregates.
-    let meter = load_meter(&entry.sidecar_path).unwrap();
-    let fights = &meter.fights;
-    assert_eq!(fights.len(), 1, "expected exactly one meter fight");
-    assert_eq!(meter_total(&fights[0], MeterMetric::Damage), 3_000);
-    assert_eq!(meter_total(&fights[0], MeterMetric::Healing), 600);
-    let damage = fights[0].actors[0]
-        .spells
-        .iter()
-        .find(|entry| entry.metric == MeterMetric::Damage)
-        .expect("damage spell");
-    assert_eq!(damage.samples.len(), 2);
-    assert_eq!(
-        damage
-            .samples
-            .iter()
-            .map(|sample| sample.amount)
-            .collect::<Vec<_>>(),
-        vec![1_500, 1_500]
-    );
-    assert!(damage.samples[0].at_ms < damage.samples[1].at_ms);
-    assert!(
-        damage
-            .samples
-            .iter()
-            .all(|sample| sample.at_ms <= entry.duration_ms)
-    );
-    let first_at = damage.samples[0].at_ms;
-    let second_at = damage.samples[1].at_ms;
-    assert_eq!(
-        projection_total(
-            &project_current(fights, first_at.saturating_sub(1)).unwrap(),
-            MeterMetric::Damage,
-        ),
-        0
-    );
-    assert_eq!(
-        projection_total(
-            &project_current(fights, first_at).unwrap(),
-            MeterMetric::Damage,
-        ),
-        1_500
-    );
-    assert_eq!(
-        projection_total(&project_overall(fights, second_at), MeterMetric::Damage),
-        3_000
-    );
 
     // Tag and protect go through the real sidecar.
     harness.send(Command::SetTag {
@@ -514,16 +400,15 @@ fn automatic_raid_completes_and_survives_a_restart() {
     let mut restarted = harness.restart();
     assert_eq!(restarted.latest.entries.len(), 1);
     assert!(restarted.latest.entries[0].protected);
+    assert_eq!(restarted.latest.entries[0].timeline, entry.timeline);
     assert!(!stray.exists(), "stray artifact was not swept");
     assert!(
         read_dir_count(&restarted.library.join(RECOVERY_DIR)) > 0,
         "nothing was quarantined"
     );
-
-    // The tagged, protected, and rescanned sidecar still carries the same
-    // full and per-second aggregates.
-    let reloaded = load_meter(&restarted.latest.entries[0].sidecar_path).unwrap();
-    assert_eq!(reloaded, meter);
+    // The restart replayed the log's end but found the player out of the
+    // map, so nothing is recording.
+    assert!(restarted.latest.active.is_none());
 
     let id = restarted.latest.entries[0].id.clone();
     restarted.send(Command::Delete { ids: vec![id] });
@@ -531,35 +416,18 @@ fn automatic_raid_completes_and_survives_a_restart() {
 }
 
 #[test]
-fn force_ended_solo_shuffle_is_abandoned_and_saved() {
-    let mut harness = Harness::new("shuffle");
-    let start_ms = now_unix_ms() - 1_000;
-    let mut lines = vec![line(
-        start_ms,
-        "ARENA_MATCH_START,2547,33,Rated Solo Shuffle,1",
-    )];
-    lines.extend(player_lines(start_ms));
-    harness.log(&lines);
+fn force_ended_map_run_is_saved() {
+    let mut harness = Harness::new("force-end");
+    harness.log(&[enter_map(seconds_ago(1), 7)]);
     harness.pump(|snapshot| snapshot.active.is_some());
-    assert_eq!(
-        harness.latest.active.as_ref().unwrap().category,
-        Category::SoloShuffle
-    );
 
     harness.emit_artifacts(true);
     harness.send(Command::ForceEnd);
     harness.pump(|snapshot| !snapshot.entries.is_empty());
 
     let entry = &harness.latest.entries[0];
-    assert_eq!(entry.category, Category::SoloShuffle);
-    assert_eq!(entry.outcome, Outcome::Loss);
-    assert!(
-        entry
-            .timeline
-            .iter()
-            .any(|item| item.kind() == &TimelineKind::Round),
-        "expected the unended round marker"
-    );
+    assert_eq!(entry.category, Category::MapRuns);
+    assert_eq!(entry.outcome, Outcome::Complete);
 }
 
 #[test]
@@ -579,10 +447,8 @@ fn manual_and_test_recordings_reuse_the_capture_pipeline() {
     assert_eq!(manual.category, Category::Manual);
     assert_eq!(manual.title, "Manual recording");
 
-    // The test recording injects its own start and end.
-    harness.send(Command::RunTest {
-        category: Category::Raids,
-    });
+    // The test recording simulates a short map run with one death.
+    harness.send(Command::RunTest);
     harness.pump(|snapshot| {
         matches!(
             snapshot.status,
@@ -595,10 +461,13 @@ fn manual_and_test_recordings_reuse_the_capture_pipeline() {
     });
     harness.emit_artifacts(true);
     harness.pump(|snapshot| snapshot.entries.len() == 2);
-    let raid = load_meter(&harness.entries_of(&Category::Raids)[0].sidecar_path).unwrap();
-    assert_eq!(raid.fights.len(), 1);
-    assert_eq!(meter_total(&raid.fights[0], MeterMetric::Damage), 7_800_000);
-    assert_eq!(raid.fights[0].actors.len(), 2);
+    let test = harness.entries_of(&Category::MapRuns)[0].clone();
+    assert_eq!(test.title, "Test Map");
+    assert!(
+        test.timeline
+            .iter()
+            .any(|item| item.kind() == &TimelineKind::Death)
+    );
 }
 
 #[test]
@@ -606,20 +475,19 @@ fn finalization_precedes_queued_user_jobs() {
     let mut harness = Harness::new("queue");
 
     // One finished recording to clip against.
-    let start_ms = now_unix_ms() - 1_000;
-    harness.log(&raid_start(start_ms));
+    harness.log(&[enter_map(seconds_ago(1), 1)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| !snapshot.entries.is_empty());
     let source = harness.latest.entries[0].clone();
 
     // A second recording, then complete it and queue a clip before the tick's
     // single dispatch: both jobs are queued before dispatch chooses a job.
-    harness.log(&raid_start(now_unix_ms() - 1_000));
+    harness.log(&[enter_map(seconds_ago(1), 2)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.send(Command::CreateClip(ClipRange {
         source: source.id.clone(),
         start_ms: 0,
@@ -635,17 +503,17 @@ fn finalization_precedes_queued_user_jobs() {
         }
         order.len() == 2
     });
-    assert_eq!(order, vec![Category::Raids, Category::Clip]);
+    assert_eq!(order, vec![Category::MapRuns, Category::Clip]);
 }
 
 #[test]
 fn commands_are_served_while_a_capture_is_ending() {
     let mut harness = Harness::new("ending");
-    harness.log(&raid_start(now_unix_ms() - 1_000));
+    harness.log(&[enter_map(seconds_ago(1), 7)]);
     harness.pump(|snapshot| snapshot.active.is_some());
 
-    // End the activity without the hook reporting any artifact yet.
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    // End the run without the hook reporting any artifact yet.
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| snapshot.active.is_none());
     assert!(
         matches!(harness.latest.status, RecorderStatus::Finalizing { .. }),
@@ -655,9 +523,9 @@ fn commands_are_served_while_a_capture_is_ending() {
     assert!(harness.latest.entries.is_empty());
 
     harness.send(Command::SetSelectedCategory {
-        category: Category::MythicPlus,
+        category: Category::Manual,
     });
-    harness.pump(|snapshot| snapshot.config.interface.selected_category == Category::MythicPlus);
+    harness.pump(|snapshot| snapshot.config.interface.selected_category == Category::Manual);
     assert!(
         harness.latest.entries.is_empty(),
         "the capture must still be waiting on its artifacts"
@@ -666,20 +534,20 @@ fn commands_are_served_while_a_capture_is_ending() {
     // The artifacts finally land: the recording finalizes as usual.
     harness.emit_artifacts(true);
     harness.pump(|snapshot| !snapshot.entries.is_empty());
-    assert_eq!(harness.latest.entries[0].category, Category::Raids);
+    assert_eq!(harness.latest.entries[0].category, Category::MapRuns);
 }
 
-/// A new pull without an `ENCOUNTER_END` for the previous one supersedes it:
-/// both must be saved, the old one abandoned.
+/// Entering a different map ends the previous run at once: both must be
+/// saved, each as its own recording.
 #[test]
-fn a_superseding_encounter_keeps_both_pulls() {
-    let mut harness = Harness::new("superseded");
-    harness.log(&raid_start(now_unix_ms() - 1_000));
+fn a_new_map_keeps_both_runs() {
+    let mut harness = Harness::new("next-map");
+    harness.log(&[enter_map(seconds_ago(1), 1)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     let first = harness.latest.active.clone().unwrap().id;
     harness.emit_artifacts(true);
 
-    harness.log(&raid_start(now_unix_ms()));
+    harness.log(&[enter_map(now_unix_ms(), 2)]);
     harness.pump(|snapshot| {
         snapshot
             .active
@@ -688,19 +556,22 @@ fn a_superseding_encounter_keeps_both_pulls() {
     });
     let second = harness.latest.active.clone().unwrap().id;
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| snapshot.entries.len() == 2);
 
-    let outcome_of = |id| {
+    let seed_of = |id| {
         harness
             .latest
             .entries
             .iter()
             .find(|entry| &entry.id == id)
-            .map(|entry| entry.outcome)
+            .and_then(|entry| match entry.details {
+                ActivityDetails::MapRun { seed, .. } => Some(seed),
+                _ => None,
+            })
     };
-    assert_eq!(outcome_of(&first), Some(Outcome::Loss));
-    assert_eq!(outcome_of(&second), Some(Outcome::Win));
+    assert_eq!(seed_of(&first), Some(1));
+    assert_eq!(seed_of(&second), Some(2));
 }
 
 #[test]
@@ -760,7 +631,7 @@ fn a_dragged_layout_outlives_the_process() {
 
     let layout = LayoutSettings {
         player_split: Some(612),
-        column_widths: BTreeMap::from([("Dungeon".to_owned(), 240)]),
+        column_widths: BTreeMap::from([("Map".to_owned(), 240)]),
     };
     harness.send(Command::SaveLayout {
         layout: layout.clone(),
@@ -774,16 +645,16 @@ fn a_dragged_layout_outlives_the_process() {
 #[test]
 fn missing_replay_falls_back_to_the_regular_recording() {
     let mut harness = Harness::new("regular-only");
-    let start_ms = now_unix_ms() - 1_000;
-    harness.log(&raid_start(start_ms));
+    let start_ms = seconds_ago(2);
+    harness.log(&[enter_map(start_ms, 7)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(false);
-    harness.log(&[player_death(start_ms + 500)]);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[player_death(start_ms)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| !snapshot.entries.is_empty());
 
     let entry = &harness.latest.entries[0];
-    assert_eq!(entry.category, Category::Raids);
+    assert_eq!(entry.category, Category::MapRuns);
     assert!(entry.media_path.exists());
     assert!(
         !entry
@@ -798,11 +669,10 @@ fn missing_replay_falls_back_to_the_regular_recording() {
 #[test]
 fn missing_regular_artifact_replaces_the_child_and_recovers() {
     let mut harness = Harness::new("failure");
-    let start_ms = now_unix_ms() - 1_000;
-    harness.log(&raid_start(start_ms));
+    harness.log(&[enter_map(seconds_ago(1), 1)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     // GSR never reports either artifact.
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| !snapshot.problems.is_empty());
     assert!(harness.latest.entries.is_empty());
     assert!(
@@ -824,14 +694,13 @@ fn missing_regular_artifact_replaces_the_child_and_recovers() {
     // The replacement re-arms, so the next recording still saves instead of
     // every later capture going silent.
     harness.pump(|snapshot| snapshot.status == RecorderStatus::Ready);
-    let start_ms = now_unix_ms() - 1_000;
-    harness.log(&raid_start(start_ms));
+    harness.log(&[enter_map(seconds_ago(1), 2)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| !snapshot.entries.is_empty());
     let entry = &harness.latest.entries[0];
-    assert_eq!(entry.category, Category::Raids);
+    assert_eq!(entry.category, Category::MapRuns);
     assert!(entry.media_path.exists(), "media was not written");
 }
 
@@ -845,7 +714,7 @@ fn canary_harness(name: &str, protected: bool) -> (Harness, poe_recorder::domain
     // A native sidecar, exactly as finalize would write one: the canary must
     // scan like any recording the app itself produced.
     let sidecar = format!(
-        r#"{{"schema_version":1,"media_file":"canary-old.mp4","id":"0d8a0e10-1a2b-4c3d-8e4f-aabbccddeeff","category":"raids","flavor":"retail","title":"Canary","start_unix_ms":{start},"duration_ms":60000,"outcome":"unknown","protected":{protected},"combatants":[],"timeline":[],"details":{{"kind":"raid"}},"media":{{"has_content":true}}}}"#
+        r#"{{"schema_version":1,"media_file":"canary-old.mp4","id":"0d8a0e10-1a2b-4c3d-8e4f-aabbccddeeff","category":"map_runs","flavor":"poe2","title":"Canary","start_unix_ms":{start},"duration_ms":60000,"outcome":"complete","protected":{protected},"timeline":[],"details":{{"kind":"map_run","area_id":"MapBluff","map_name":"Bluff","area_level":80,"seed":1,"deaths":0,"portal_trips":0,"away_ms":0}},"media":{{"has_content":true}}}}"#
     );
     fs::write(library.join("canary-old.json"), sidecar).unwrap();
     fs::write(library.join("canary-old.mp4"), b"canary media").unwrap();
@@ -870,31 +739,26 @@ fn counted_usage(entries: &[&poe_recorder::domain::LibraryEntry]) -> u64 {
 fn completion_updates_the_library_without_a_full_rescan() {
     let (mut harness, canary) = canary_harness("incremental", false);
 
-    let start_ms = now_unix_ms() - 1_000;
-    harness.log(&raid_start(start_ms));
+    harness.log(&[enter_map(seconds_ago(1), 2)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| snapshot.entries.len() == 2);
 
     // The completed recording is the newest entry and the canary kept its
     // place despite its missing media, which a rescan would have dropped.
-    let raid = harness.latest.entries[0].clone();
-    assert_eq!(raid.category, Category::Raids);
+    let run = harness.latest.entries[0].clone();
+    assert_eq!(run.category, Category::MapRuns);
     assert_eq!(harness.latest.entries[1].id, canary.id);
-    // Correlation groups follow the same order.
-    assert_eq!(harness.latest.correlations.len(), 2);
-    assert_eq!(harness.latest.correlations[0].primary_id, raid.id);
-    assert_eq!(harness.latest.correlations[1].primary_id, canary.id);
     // Usage tracks the real files, including the canary's missing media.
     assert_eq!(
         harness.latest.storage_used_bytes,
-        counted_usage(&[&raid, &canary])
+        counted_usage(&[&run, &canary])
     );
 
     // Tag and protect fold into the index the same way.
     harness.send(Command::SetTag {
-        id: raid.id.clone(),
+        id: run.id.clone(),
         tag: "keeper".to_owned(),
     });
     harness.pump(|snapshot| snapshot.entries[0].tag.as_deref() == Some("keeper"));
@@ -902,7 +766,7 @@ fn completion_updates_the_library_without_a_full_rescan() {
 
     // Deletion removes only the deleted entry.
     harness.send(Command::Delete {
-        ids: vec![raid.id.clone()],
+        ids: vec![run.id.clone()],
     });
     harness.pump(|snapshot| snapshot.entries.len() == 1);
     assert_eq!(harness.latest.entries[0].id, canary.id);
@@ -910,23 +774,22 @@ fn completion_updates_the_library_without_a_full_rescan() {
         harness.latest.storage_used_bytes,
         counted_usage(&[&harness.latest.entries[0]])
     );
-    assert!(!raid.media_path.exists());
-    assert!(!raid.sidecar_path.exists());
+    assert!(!run.media_path.exists());
+    assert!(!run.sidecar_path.exists());
 }
 
 #[test]
 fn completion_eviction_updates_the_index_without_a_full_rescan() {
     let (mut harness, canary) = canary_harness("eviction", true);
 
-    // One unprotected raid, then a storage cap below its padded size.
-    let start_ms = now_unix_ms() - 1_000;
-    harness.log(&raid_start(start_ms));
+    // One unprotected map run, then a storage cap below its padded size.
+    harness.log(&[enter_map(seconds_ago(1), 2)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
+    harness.log(&[hideout(now_unix_ms())]);
     harness.pump(|snapshot| snapshot.entries.len() == 2);
-    let raid = harness.latest.entries[0].clone();
-    assert_eq!(raid.category, Category::Raids);
+    let run = harness.latest.entries[0].clone();
+    assert_eq!(run.category, Category::MapRuns);
 
     let mut draft = harness.latest.config.clone();
     draft.storage.limit = StorageLimit::Gib(NonZeroU64::new(1).expect("nonzero"));
@@ -937,30 +800,29 @@ fn completion_eviction_updates_the_index_without_a_full_rescan() {
         snapshot.config.storage.limit == StorageLimit::Gib(NonZeroU64::new(1).expect("nonzero"))
     });
 
-    // Sparse-pad the raid past the cap without touching its bytes.
+    // Sparse-pad the run past the cap without touching its bytes.
     let padded = fs::OpenOptions::new()
         .write(true)
-        .open(&raid.media_path)
+        .open(&run.media_path)
         .unwrap();
     padded.set_len(2 * 1024 * 1024 * 1024).unwrap();
 
-    harness.log(&raid_start(now_unix_ms()));
+    harness.log(&[enter_map(now_unix_ms(), 3)]);
     harness.pump(|snapshot| snapshot.active.is_some());
     harness.emit_artifacts(true);
-    harness.log(&[raid_end(now_unix_ms(), true)]);
-    let raid_id = raid.id.clone();
+    harness.log(&[hideout(now_unix_ms())]);
+    let run_id = run.id.clone();
     harness.pump(|snapshot| {
-        snapshot.entries.len() == 2 && snapshot.entries.iter().all(|entry| entry.id != raid_id)
+        snapshot.entries.len() == 2 && snapshot.entries.iter().all(|entry| entry.id != run_id)
     });
 
     // Eviction removed the oldest unprotected recording; the protected canary
     // survived and, with its media missing, only if no rescan ran.
     let newest = harness.latest.entries[0].clone();
-    assert_eq!(newest.category, Category::Raids);
-    assert_ne!(newest.id, raid.id);
+    assert_eq!(newest.category, Category::MapRuns);
+    assert_ne!(newest.id, run.id);
     assert_eq!(harness.latest.entries[1].id, canary.id);
-    assert!(!raid.media_path.exists(), "evicted media was not removed");
-    assert_eq!(harness.latest.correlations.len(), 2);
+    assert!(!run.media_path.exists(), "evicted media was not removed");
     assert_eq!(
         harness.latest.storage_used_bytes,
         counted_usage(&[&newest, &canary])
@@ -985,27 +847,6 @@ fn production_handle_starts_and_shuts_down() {
     );
     assert!(handle.send(Command::Disarm));
     handle.shutdown();
-}
-
-/// Actor totals derive structurally from the spell entries.
-fn meter_total(fight: &MeterFight, metric: MeterMetric) -> u64 {
-    fight
-        .actors
-        .iter()
-        .flat_map(|actor| &actor.spells)
-        .filter(|entry| entry.metric == metric)
-        .map(|entry| entry.amount)
-        .sum()
-}
-
-fn projection_total(projection: &MeterProjection, metric: MeterMetric) -> u64 {
-    projection
-        .actors
-        .iter()
-        .flat_map(|actor| &actor.spells)
-        .filter(|entry| entry.metric == metric)
-        .map(|entry| entry.amount)
-        .sum()
 }
 
 fn read_dir_count(path: &Path) -> usize {

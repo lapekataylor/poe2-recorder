@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -14,12 +14,9 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::domain::{
-    Category, Codec, DeathMarkerVisibility, MarkerVisibility, RaidDifficulty, ReplayStorage,
-    StorageLimit,
-};
+use crate::domain::{Category, Codec, DeathMarkerVisibility, ReplayStorage, StorageLimit};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const APP_ID: &str = "io.github.lapekataylor.PoeRecorder";
@@ -73,45 +70,13 @@ pub struct FlavorConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct FlavorSettings {
-    pub retail: FlavorConfig,
-    pub retail_ptr: FlavorConfig,
-    pub classic: FlavorConfig,
-    pub classic_ptr: FlavorConfig,
-    pub era: FlavorConfig,
     /// Path of Exile 2: its `logs` folder, which holds `Client.txt`.
     #[serde(default)]
     pub poe2: FlavorConfig,
 }
 
-impl FlavorSettings {
-    fn in_field_order(&self) -> [(&'static str, &FlavorConfig); 5] {
-        [
-            ("flavors.retail", &self.retail),
-            ("flavors.retail_ptr", &self.retail_ptr),
-            ("flavors.classic", &self.classic),
-            ("flavors.classic_ptr", &self.classic_ptr),
-            ("flavors.era", &self.era),
-        ]
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivitySettings {
-    pub record_raids: bool,
-    pub record_dungeons: bool,
-    pub record_two_v_two: bool,
-    pub record_three_v_three: bool,
-    pub record_five_v_five: bool,
-    pub record_skirmish: bool,
-    pub record_solo_shuffle: bool,
-    pub record_battlegrounds: bool,
-    pub record_challenge_modes: bool,
-    pub min_keystone_level: u32,
-    pub min_raid_difficulty: RaidDifficulty,
-    pub min_raid_duration_seconds: i32,
-    pub current_raid_only: bool,
-    pub raid_overrun_seconds: u32,
-    pub dungeon_overrun_seconds: u32,
     /// How long a Path of Exile 2 map run waits for the player to come back
     /// from the hideout before it ends.
     #[serde(default = "default_map_grace_seconds")]
@@ -125,37 +90,8 @@ fn default_map_grace_seconds() -> u32 {
 impl Default for ActivitySettings {
     fn default() -> Self {
         Self {
-            record_raids: true,
-            record_dungeons: true,
-            record_two_v_two: true,
-            record_three_v_three: true,
-            record_five_v_five: true,
-            record_skirmish: true,
-            record_solo_shuffle: true,
-            record_battlegrounds: true,
-            record_challenge_modes: true,
-            min_keystone_level: 2,
-            min_raid_difficulty: RaidDifficulty::Lfr,
-            min_raid_duration_seconds: 15,
-            current_raid_only: false,
-            raid_overrun_seconds: 15,
-            dungeon_overrun_seconds: 5,
             map_grace_seconds: default_map_grace_seconds(),
         }
-    }
-}
-
-impl ActivitySettings {
-    fn any_enabled(&self) -> bool {
-        self.record_raids
-            || self.record_dungeons
-            || self.record_two_v_two
-            || self.record_three_v_three
-            || self.record_five_v_five
-            || self.record_skirmish
-            || self.record_solo_shuffle
-            || self.record_battlegrounds
-            || self.record_challenge_modes
     }
 }
 
@@ -231,7 +167,8 @@ impl Default for ManualSettings {
 pub struct LayoutSettings {
     pub player_split: Option<i32>,
     /// Column title to width. Titles are shared across category families, so a
-    /// width dragged in Mythic+ also applies to the raid column of that name.
+    /// width dragged in one category also applies to a column of that name in
+    /// another.
     pub column_widths: BTreeMap<String, i32>,
 }
 
@@ -239,8 +176,8 @@ pub struct LayoutSettings {
 pub struct InterfaceSettings {
     pub hide_empty_categories: bool,
     pub death_markers: DeathMarkerVisibility,
-    pub encounter_markers: MarkerVisibility,
-    pub round_markers: MarkerVisibility,
+    /// Settings from Warcraft Recorder may name a category that is gone.
+    #[serde(deserialize_with = "category_or_map_runs")]
     pub selected_category: Category,
     pub minimize_to_tray: bool,
     pub close_to_tray: bool,
@@ -254,15 +191,18 @@ impl Default for InterfaceSettings {
         Self {
             hide_empty_categories: false,
             death_markers: DeathMarkerVisibility::Own,
-            encounter_markers: MarkerVisibility::Visible,
-            round_markers: MarkerVisibility::Visible,
-            selected_category: Category::ThreeVThree,
+            selected_category: Category::MapRuns,
             minimize_to_tray: true,
             close_to_tray: true,
             start_minimized: false,
             layout: LayoutSettings::default(),
         }
     }
+}
+
+fn category_or_map_runs<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Category, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(Category::deserialize(value).unwrap_or(Category::MapRuns))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,34 +276,15 @@ impl Config {
             );
         }
 
-        if !self.any_flavor_enabled() && !self.flavors.poe2.enabled {
+        if !self.flavors.poe2.enabled {
             problems.push(ValidationProblem::new(
                 "flavors",
-                "Enable Path of Exile 2 or a World of Warcraft flavor.",
+                "Turn on Path of Exile 2 and choose its logs directory.",
             ));
-        }
-
-        for (field, flavor) in self.flavors.in_field_order() {
-            validate_flavor(&mut problems, field, flavor, self.validate_log_paths);
         }
         validate_poe2(&mut problems, &self.flavors.poe2, self.validate_log_paths);
 
-        if self.any_flavor_enabled() && !self.activities.any_enabled() {
-            problems.push(ValidationProblem::new(
-                "activities",
-                "Enable at least one automatic activity type.",
-            ));
-        }
-
         problems
-    }
-
-    fn any_flavor_enabled(&self) -> bool {
-        self.flavors.retail.enabled
-            || self.flavors.retail_ptr.enabled
-            || self.flavors.classic.enabled
-            || self.flavors.classic_ptr.enabled
-            || self.flavors.era.enabled
     }
 
     fn persistence_problems(&self) -> Vec<ValidationProblem> {
@@ -381,9 +302,6 @@ impl Config {
             ("storage.buffer_dir", &self.storage.buffer_dir),
         ] {
             validate_path_state(&mut problems, field, path);
-        }
-        for (field, flavor) in self.flavors.in_field_order() {
-            validate_path_state(&mut problems, field, &flavor.log_dir);
         }
         validate_path_state(&mut problems, "flavors.poe2", &self.flavors.poe2.log_dir);
         if self.activities.map_grace_seconds > 1_800 {
@@ -444,25 +362,6 @@ impl Config {
                 "The capture-target token cannot be empty.",
             ));
         }
-        if self.activities.min_raid_duration_seconds > 10_000 {
-            problems.push(ValidationProblem::new(
-                "activities.min_raid_duration_seconds",
-                "Minimum raid duration cannot exceed 10000 seconds.",
-            ));
-        }
-        if self.activities.raid_overrun_seconds > 60 {
-            problems.push(ValidationProblem::new(
-                "activities.raid_overrun_seconds",
-                "Raid overrun must be between 0 and 60 seconds.",
-            ));
-        }
-        if self.activities.dungeon_overrun_seconds > 60 {
-            problems.push(ValidationProblem::new(
-                "activities.dungeon_overrun_seconds",
-                "Dungeon overrun must be between 0 and 60 seconds.",
-            ));
-        }
-
         problems
     }
 
@@ -529,33 +428,6 @@ fn validate_active_path(
         problems.push(ValidationProblem::new(field, missing_message));
     } else if !path.is_authorized() {
         problems.push(ValidationProblem::new(field, unauthorized_message));
-    }
-}
-
-fn validate_flavor(
-    problems: &mut Vec<ValidationProblem>,
-    field: &'static str,
-    flavor: &FlavorConfig,
-    validate_log_paths: bool,
-) {
-    if !flavor.enabled {
-        return;
-    }
-    if flavor.log_dir.path.as_os_str().is_empty() {
-        problems.push(ValidationProblem::new(
-            field,
-            "Choose the enabled flavor's Logs directory.",
-        ));
-    } else if !flavor.log_dir.is_authorized() {
-        problems.push(ValidationProblem::new(
-            field,
-            "Choose the enabled flavor's Logs directory again to authorize access.",
-        ));
-    } else if validate_log_paths && flavor.log_dir.path.file_name() != Some(OsStr::new("Logs")) {
-        problems.push(ValidationProblem::new(
-            field,
-            "Choose this flavor's World of Warcraft Logs directory.",
-        ));
     }
 }
 
@@ -785,9 +657,9 @@ mod tests {
     fn ready_config() -> Config {
         let mut config = Config::default();
         config.storage.recording_dir = AuthorizedPath::authorized("/recordings");
-        config.flavors.retail = FlavorConfig {
+        config.flavors.poe2 = FlavorConfig {
             enabled: true,
-            log_dir: AuthorizedPath::authorized("/games/wow/_retail_/Logs"),
+            log_dir: AuthorizedPath::authorized("/games/Path of Exile 2/logs"),
         };
         config
     }
@@ -843,14 +715,19 @@ mod tests {
                 }),
             ),
             (
-                "flavors.retail",
-                Box::new(|config| config.flavors.retail.log_dir = AuthorizedPath::unset()),
+                "flavors.poe2",
+                Box::new(|config| config.flavors.poe2.log_dir = AuthorizedPath::unset()),
             ),
             (
-                "flavors.retail",
+                "flavors.poe2",
                 Box::new(|config| {
-                    config.flavors.retail.log_dir = AuthorizedPath::authorized("/wow/Data")
+                    config.flavors.poe2.log_dir =
+                        AuthorizedPath::authorized("/games/Path of Exile 2/Bundles2")
                 }),
+            ),
+            (
+                "flavors",
+                Box::new(|config| config.flavors.poe2.enabled = false),
             ),
             (
                 "capture.audio_input",
@@ -892,17 +769,14 @@ mod tests {
         config.capture.replay_buffer_seconds = 29;
         config.capture.extra_lead_in_seconds = 31;
         config.capture.audio_output.clear();
-        config.activities.min_raid_duration_seconds = 10_001;
-        config.activities.raid_overrun_seconds = 61;
-        config.activities.dungeon_overrun_seconds = 61;
-        config.flavors.retail = FlavorConfig {
+        config.activities.map_grace_seconds = 1_801;
+        config.flavors.poe2 = FlavorConfig {
             enabled: true,
             log_dir: AuthorizedPath {
-                path: PathBuf::from("/games/wow/_retail_/Logs"),
+                path: PathBuf::from("/games/Path of Exile 2/logs"),
                 authorization: PathAuthorization::ImportedInactive,
             },
         };
-        disable_automatic_activities(&mut config);
 
         let fields: Vec<_> = config
             .validate()
@@ -913,35 +787,53 @@ mod tests {
             fields,
             [
                 "version",
+                "activities.map_grace_seconds",
                 "capture.fps",
                 "capture.bitrate_kbps",
                 "capture.replay_buffer_seconds",
                 "capture.extra_lead_in_seconds",
                 "capture.audio_output",
-                "activities.min_raid_duration_seconds",
-                "activities.raid_overrun_seconds",
-                "activities.dungeon_overrun_seconds",
                 "storage.recording_dir",
                 "storage.buffer_dir",
-                "flavors.retail",
-                "activities",
+                "flavors.poe2",
             ]
         );
 
         let mut single_path_problem = ready_config();
-        single_path_problem.flavors.classic.log_dir = AuthorizedPath {
-            path: PathBuf::from("/games/wow/_classic_/Logs"),
+        single_path_problem.flavors.poe2.log_dir = AuthorizedPath {
+            path: PathBuf::from("/games/Path of Exile 2/logs"),
             authorization: PathAuthorization::Unset,
         };
         assert_eq!(
             single_path_problem
                 .persistence_problems()
                 .iter()
-                .filter(|problem| problem.field == "flavors.classic")
+                .filter(|problem| problem.field == "flavors.poe2")
                 .count(),
             1,
-            "each saved flavor path state is validated exactly once"
+            "the saved log path state is validated exactly once"
         );
+    }
+
+    #[test]
+    fn warcraft_recorder_settings_still_load() {
+        let directory = temporary_directory("config-legacy");
+        let path = directory.join(CONFIG_FILENAME);
+        let mut json = serde_json::to_value(ready_config()).expect("serialize");
+        json["flavors"]["retail"] = serde_json::json!({
+            "enabled": true,
+            "log_dir": { "path": "/wow/Logs", "authorization": "authorized" }
+        });
+        json["activities"]["record_raids"] = serde_json::json!(true);
+        json["interface"]["round_markers"] = serde_json::json!("visible");
+        json["interface"]["selected_category"] = serde_json::json!("three_v_three");
+        fs::write(&path, json.to_string()).expect("write legacy config");
+
+        let loaded = Config::load(&path).expect("load legacy config");
+        assert_eq!(loaded.interface.selected_category, Category::MapRuns);
+        assert_eq!(loaded.flavors, ready_config().flavors);
+
+        fs::remove_dir_all(directory).expect("remove test directory");
     }
 
     #[test]
@@ -1011,17 +903,5 @@ mod tests {
             config_path_from_values(None, None),
             Err(ConfigError::UnresolvedHome)
         ));
-    }
-
-    fn disable_automatic_activities(config: &mut Config) {
-        config.activities.record_raids = false;
-        config.activities.record_dungeons = false;
-        config.activities.record_two_v_two = false;
-        config.activities.record_three_v_three = false;
-        config.activities.record_five_v_five = false;
-        config.activities.record_skirmish = false;
-        config.activities.record_solo_shuffle = false;
-        config.activities.record_battlegrounds = false;
-        config.activities.record_challenge_modes = false;
     }
 }

@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn hide_empty_hides_only_zero_categories_once_videos_exist() {
         let views = rows(&snapshot(
-            vec![(Category::Raids, 3), (Category::Clip, 1)],
+            vec![(Category::MapRuns, 3), (Category::Clip, 1)],
             true,
             false,
         ));
@@ -280,15 +280,14 @@ mod tests {
                 .expect("row exists")
                 .visible
         };
-        assert!(visible(&Category::Raids));
+        assert!(visible(&Category::MapRuns));
         assert!(visible(&Category::Clip));
-        assert!(!visible(&Category::TwoVTwo));
         assert!(!visible(&Category::Manual));
     }
 
     #[test]
     fn manual_stays_visible_when_manual_recording_is_enabled() {
-        let views = rows(&snapshot(vec![(Category::Raids, 1)], true, true));
+        let views = rows(&snapshot(vec![(Category::MapRuns, 1)], true, true));
         let manual = views
             .iter()
             .find(|view| view.category == Category::Manual)

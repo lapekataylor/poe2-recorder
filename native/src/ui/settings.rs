@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The Settings dialog: four preference pages (Capture, Audio, Activities,
+//! The Settings dialog: four preference pages (Capture, Audio, Game,
 //! Storage & interface) built from the spec tables below, editing one draft
 //! `Config` that is validated and sent as `SaveConfig` on Apply. libadwaita's
 //! `AdwPreferencesDialog` exposes no Apply/Cancel actions, so this is one
@@ -22,7 +22,7 @@ use libadwaita::prelude::*;
 
 use poe_recorder::config::{AuthorizedPath, Config, ValidationProblem};
 use poe_recorder::coordinator::{AppSnapshot, Command};
-use poe_recorder::domain::{Codec, RaidDifficulty, RecorderStatus, ReplayStorage, StorageLimit};
+use poe_recorder::domain::{Codec, RecorderStatus, ReplayStorage, StorageLimit};
 use poe_recorder::recorder::{AudioDevice, Recorder};
 use poe_recorder::storage::now_unix_ms;
 
@@ -163,159 +163,22 @@ pub static CAPTURE_SWITCHES: [SwitchSpec; 1] = [SwitchSpec {
     set: |config, value| config.capture.capture_cursor = value,
 }];
 
-/// Rail order: raids, dungeons, arena sizes, skirmish, shuffle, battlegrounds,
-/// challenge modes.
-pub static ACTIVITY_SWITCHES: [SwitchSpec; 9] = [
-    SwitchSpec {
-        field: "activities.record_raids",
-        title: "Record raids",
-        subtitle: "",
-        get: |config| config.activities.record_raids,
-        set: |config, value| config.activities.record_raids = value,
-    },
-    SwitchSpec {
-        field: "activities.record_dungeons",
-        title: "Record Mythic+ dungeons",
-        subtitle: "",
-        get: |config| config.activities.record_dungeons,
-        set: |config, value| config.activities.record_dungeons = value,
-    },
-    SwitchSpec {
-        field: "activities.record_two_v_two",
-        title: "Record 2v2",
-        subtitle: "",
-        get: |config| config.activities.record_two_v_two,
-        set: |config, value| config.activities.record_two_v_two = value,
-    },
-    SwitchSpec {
-        field: "activities.record_three_v_three",
-        title: "Record 3v3",
-        subtitle: "",
-        get: |config| config.activities.record_three_v_three,
-        set: |config, value| config.activities.record_three_v_three = value,
-    },
-    SwitchSpec {
-        field: "activities.record_five_v_five",
-        title: "Record 5v5",
-        subtitle: "",
-        get: |config| config.activities.record_five_v_five,
-        set: |config, value| config.activities.record_five_v_five = value,
-    },
-    SwitchSpec {
-        field: "activities.record_skirmish",
-        title: "Record skirmishes",
-        subtitle: "",
-        get: |config| config.activities.record_skirmish,
-        set: |config, value| config.activities.record_skirmish = value,
-    },
-    SwitchSpec {
-        field: "activities.record_solo_shuffle",
-        title: "Record Solo Shuffle",
-        subtitle: "",
-        get: |config| config.activities.record_solo_shuffle,
-        set: |config, value| config.activities.record_solo_shuffle = value,
-    },
-    SwitchSpec {
-        field: "activities.record_battlegrounds",
-        title: "Record battlegrounds",
-        subtitle: "",
-        get: |config| config.activities.record_battlegrounds,
-        set: |config, value| config.activities.record_battlegrounds = value,
-    },
-    SwitchSpec {
-        field: "activities.record_challenge_modes",
-        title: "Record challenge modes",
-        subtitle: "Classic challenge-mode dungeons",
-        get: |config| config.activities.record_challenge_modes,
-        set: |config, value| config.activities.record_challenge_modes = value,
-    },
-];
-
-pub static ACTIVITY_COMBOS: [ComboSpec; 1] = [ComboSpec {
-    field: "activities.min_raid_difficulty",
-    title: "Minimum raid difficulty",
-    choices: &["LFR", "Normal", "Heroic", "Mythic"],
-    get: |config| match config.activities.min_raid_difficulty {
-        RaidDifficulty::Lfr => 0,
-        RaidDifficulty::Normal => 1,
-        RaidDifficulty::Heroic => 2,
-        RaidDifficulty::Mythic => 3,
-    },
-    set: |config, index| {
-        config.activities.min_raid_difficulty = match index {
-            1 => RaidDifficulty::Normal,
-            2 => RaidDifficulty::Heroic,
-            3 => RaidDifficulty::Mythic,
-            _ => RaidDifficulty::Lfr,
-        }
-    },
+pub static ACTIVITY_SPINS: [SpinSpec; 1] = [SpinSpec {
+    field: "activities.map_grace_seconds",
+    title: "Map grace period",
+    subtitle: "Seconds a map run waits for you to return from the hideout (0–1800)",
+    min: 0.0,
+    max: 1_800.0,
+    step: 30.0,
+    get: |config| f64::from(config.activities.map_grace_seconds),
+    set: |config, value| config.activities.map_grace_seconds = value as u32,
 }];
 
-pub static ACTIVITY_SPINS: [SpinSpec; 5] = [
-    SpinSpec {
-        field: "activities.map_grace_seconds",
-        title: "Map grace period",
-        subtitle: "Seconds a map run waits for you to return from the hideout (0–1800)",
-        min: 0.0,
-        max: 1_800.0,
-        step: 30.0,
-        get: |config| f64::from(config.activities.map_grace_seconds),
-        set: |config, value| config.activities.map_grace_seconds = value as u32,
-    },
-    SpinSpec {
-        field: "activities.min_raid_duration_seconds",
-        title: "Minimum raid duration",
-        subtitle: "Seconds; shorter raid pulls are discarded (0–10000)",
-        min: 0.0,
-        max: 10_000.0,
-        step: 5.0,
-        get: |config| f64::from(config.activities.min_raid_duration_seconds),
-        set: |config, value| config.activities.min_raid_duration_seconds = value as i32,
-    },
-    SpinSpec {
-        field: "activities.raid_overrun_seconds",
-        title: "Raid overrun",
-        subtitle: "Seconds recorded after a raid ends (0–60)",
-        min: 0.0,
-        max: 60.0,
-        step: 1.0,
-        get: |config| f64::from(config.activities.raid_overrun_seconds),
-        set: |config, value| config.activities.raid_overrun_seconds = value as u32,
-    },
-    SpinSpec {
-        field: "activities.min_keystone_level",
-        title: "Minimum keystone level",
-        subtitle: "Lower keys are not recorded (minimum 2)",
-        min: 2.0,
-        max: 100.0,
-        step: 1.0,
-        get: |config| f64::from(config.activities.min_keystone_level),
-        set: |config, value| config.activities.min_keystone_level = value as u32,
-    },
-    SpinSpec {
-        field: "activities.dungeon_overrun_seconds",
-        title: "Dungeon overrun",
-        subtitle: "Seconds recorded after a dungeon ends (0–60)",
-        min: 0.0,
-        max: 60.0,
-        step: 1.0,
-        get: |config| f64::from(config.activities.dungeon_overrun_seconds),
-        set: |config, value| config.activities.dungeon_overrun_seconds = value as u32,
-    },
-];
-
-pub static ACTIVITY_EXTRA_SWITCHES: [SwitchSpec; 4] = [
-    SwitchSpec {
-        field: "activities.current_raid_only",
-        title: "Current raid tier only",
-        subtitle: "Skip encounters from older raids",
-        get: |config| config.activities.current_raid_only,
-        set: |config, value| config.activities.current_raid_only = value,
-    },
+pub static ACTIVITY_EXTRA_SWITCHES: [SwitchSpec; 3] = [
     SwitchSpec {
         field: "validate_log_paths",
-        title: "Validate log folders",
-        subtitle: "Require each chosen folder to be a World of Warcraft Logs directory",
+        title: "Validate the logs folder",
+        subtitle: "Require the chosen folder to be the game's logs folder",
         get: |config| config.validate_log_paths,
         set: |config, value| config.validate_log_paths = value,
     },
@@ -392,7 +255,7 @@ pub static INTERFACE_SWITCHES: [SwitchSpec; 5] = [
     },
 ];
 
-pub static PATHS: [PathSpec; 8] = [
+pub static PATHS: [PathSpec; 3] = [
     PathSpec {
         field: "flavors.poe2",
         title: "Path of Exile 2 logs",
@@ -402,61 +265,6 @@ pub static PATHS: [PathSpec; 8] = [
         enabled: Some(EnabledAccess {
             get: |config| config.flavors.poe2.enabled,
             set: |config, value| config.flavors.poe2.enabled = value,
-        }),
-    },
-    PathSpec {
-        field: "flavors.retail",
-        title: "Retail",
-        needs_write: false,
-        get: |config| &config.flavors.retail.log_dir,
-        set: |config, path| config.flavors.retail.log_dir = path,
-        enabled: Some(EnabledAccess {
-            get: |config| config.flavors.retail.enabled,
-            set: |config, value| config.flavors.retail.enabled = value,
-        }),
-    },
-    PathSpec {
-        field: "flavors.retail_ptr",
-        title: "Retail PTR",
-        needs_write: false,
-        get: |config| &config.flavors.retail_ptr.log_dir,
-        set: |config, path| config.flavors.retail_ptr.log_dir = path,
-        enabled: Some(EnabledAccess {
-            get: |config| config.flavors.retail_ptr.enabled,
-            set: |config, value| config.flavors.retail_ptr.enabled = value,
-        }),
-    },
-    PathSpec {
-        field: "flavors.classic",
-        title: "Classic",
-        needs_write: false,
-        get: |config| &config.flavors.classic.log_dir,
-        set: |config, path| config.flavors.classic.log_dir = path,
-        enabled: Some(EnabledAccess {
-            get: |config| config.flavors.classic.enabled,
-            set: |config, value| config.flavors.classic.enabled = value,
-        }),
-    },
-    PathSpec {
-        field: "flavors.classic_ptr",
-        title: "Classic PTR",
-        needs_write: false,
-        get: |config| &config.flavors.classic_ptr.log_dir,
-        set: |config, path| config.flavors.classic_ptr.log_dir = path,
-        enabled: Some(EnabledAccess {
-            get: |config| config.flavors.classic_ptr.enabled,
-            set: |config, value| config.flavors.classic_ptr.enabled = value,
-        }),
-    },
-    PathSpec {
-        field: "flavors.era",
-        title: "Era",
-        needs_write: false,
-        get: |config| &config.flavors.era.log_dir,
-        set: |config, path| config.flavors.era.log_dir = path,
-        enabled: Some(EnabledAccess {
-            get: |config| config.flavors.era.enabled,
-            set: |config, value| config.flavors.era.enabled = value,
         }),
     },
     PathSpec {
@@ -482,13 +290,6 @@ pub static PATHS: [PathSpec; 8] = [
 pub fn row_sensitive(field: &str, config: &Config) -> bool {
     match field {
         "activities.map_grace_seconds" => config.flavors.poe2.enabled,
-        "activities.min_raid_difficulty"
-        | "activities.min_raid_duration_seconds"
-        | "activities.current_raid_only"
-        | "activities.raid_overrun_seconds" => config.activities.record_raids,
-        "activities.min_keystone_level" | "activities.dungeon_overrun_seconds" => {
-            config.activities.record_dungeons
-        }
         "storage.buffer_dir" => config.storage.separate_buffer_dir,
         "manual.sound" => config.manual.enabled,
         "capture.audio_input" => config.capture.audio_input.is_some(),
@@ -623,9 +424,6 @@ pub struct Settings {
     input_combo: adw::ComboRow,
     input_ids: Rc<RefCell<Vec<String>>>,
     audio_group: adw::PreferencesGroup,
-    advanced_box: gtk4::Box,
-    /// What `advanced_box` was last built from; see `StatusCard`.
-    rendered_warnings: RefCell<Vec<String>>,
     storage_group: adw::PreferencesGroup,
     protected_note: gtk4::Label,
     tray_note: gtk4::Label,
@@ -750,28 +548,22 @@ impl Settings {
         audio_group.add(&input_combo);
         audio_page.add(&audio_group);
 
-        // --- Activities ----------------------------------------------------
+        // --- Game ----------------------------------------------------------
         let activities_page = adw::PreferencesPage::new();
         let logs_group = adw::PreferencesGroup::new();
-        logs_group.set_title("Combat logs");
+        logs_group.set_title("Game log");
         logs_group.set_description(Some(
-            "Enable each World of Warcraft flavour and choose its Logs folder.",
+            "Turn on Path of Exile 2 and choose the logs folder inside its install folder.",
         ));
-        for spec in PATHS.iter().take(5) {
+        for spec in PATHS.iter().take(1) {
             let (row, select) = path_row(spec, &draft, &registry, &refresh, parent);
             gated.push(select.upcast());
             logs_group.add(&row);
         }
-        let advanced_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-        logs_group.add(&advanced_box);
         activities_page.add(&logs_group);
 
         let auto_group = adw::PreferencesGroup::new();
-        auto_group.set_title("Automatic recording");
-        for spec in &ACTIVITY_SWITCHES {
-            auto_group.add(&switch_row(spec, &draft, &registry, &refresh));
-        }
-        auto_group.add(&combo_row(&ACTIVITY_COMBOS[0], &draft, &registry, &refresh));
+        auto_group.set_title("Map runs");
         for spec in &ACTIVITY_SPINS {
             auto_group.add(&spin_row(spec, &draft, &registry, &refresh));
         }
@@ -781,24 +573,18 @@ impl Settings {
             &registry,
             &refresh,
         ));
-        auto_group.add(&switch_row(
-            &ACTIVITY_EXTRA_SWITCHES[1],
-            &draft,
-            &registry,
-            &refresh,
-        ));
         activities_page.add(&auto_group);
 
         let manual_group = adw::PreferencesGroup::new();
         manual_group.set_title("Manual and test recording");
         manual_group.add(&switch_row(
-            &ACTIVITY_EXTRA_SWITCHES[2],
+            &ACTIVITY_EXTRA_SWITCHES[1],
             &draft,
             &registry,
             &refresh,
         ));
         manual_group.add(&switch_row(
-            &ACTIVITY_EXTRA_SWITCHES[3],
+            &ACTIVITY_EXTRA_SWITCHES[2],
             &draft,
             &registry,
             &refresh,
@@ -819,10 +605,10 @@ impl Settings {
         let storage_page = adw::PreferencesPage::new();
         let storage_group = adw::PreferencesGroup::new();
         storage_group.set_title("Storage");
-        for (index, spec) in PATHS.iter().enumerate().skip(5) {
+        for (index, spec) in PATHS.iter().enumerate().skip(1) {
             let (row, select) = path_row(spec, &draft, &registry, &refresh, parent);
             gated.push(select.upcast());
-            if index == 5 {
+            if index == 1 {
                 storage_group.add(&row);
                 storage_group.add(&switch_row(
                     &INTERFACE_SWITCHES[0],
@@ -874,7 +660,7 @@ impl Settings {
             (
                 &activities_page,
                 "activities",
-                "Activities",
+                "Game",
                 "input-gaming-symbolic",
             ),
             (
@@ -971,8 +757,6 @@ impl Settings {
             input_combo,
             input_ids,
             audio_group,
-            advanced_box,
-            rendered_warnings: RefCell::new(Vec::new()),
             storage_group,
             protected_note,
             tray_note,
@@ -1131,22 +915,6 @@ impl Settings {
             .set_description(Some(&storage_summary(snapshot.storage_used_bytes)));
         self.protected_note
             .set_visible(snapshot.protected_over_limit);
-
-        let warnings = super::status::advanced_logging_warnings(snapshot);
-        if *self.rendered_warnings.borrow() != warnings {
-            while let Some(child) = self.advanced_box.first_child() {
-                self.advanced_box.remove(&child);
-            }
-            for warning in &warnings {
-                let label = gtk4::Label::new(Some(warning));
-                label.set_wrap(true);
-                label.set_xalign(0.0);
-                label.add_css_class("warning");
-                label.add_css_class("caption");
-                self.advanced_box.append(&label);
-            }
-            *self.rendered_warnings.borrow_mut() = warnings;
-        }
 
         if let Some((sent, sent_at_ms)) = pending
             && snapshot.config == sent
@@ -1476,9 +1244,9 @@ mod tests {
     fn ready_config() -> Config {
         let mut config = Config::default();
         config.storage.recording_dir = AuthorizedPath::authorized("/recordings");
-        config.flavors.retail = FlavorConfig {
+        config.flavors.poe2 = FlavorConfig {
             enabled: true,
-            log_dir: AuthorizedPath::authorized("/wow/_retail_/Logs"),
+            log_dir: AuthorizedPath::authorized("/games/Path of Exile 2/logs"),
         };
         config
     }
@@ -1493,7 +1261,7 @@ mod tests {
         // Both required folders are set, and the buffer folder shares the
         // recording folder: nothing to ask for.
         assert!(!path_needs_attention("storage.recording_dir", &config));
-        assert!(!path_needs_attention("flavors.retail", &config));
+        assert!(!path_needs_attention("flavors.poe2", &config));
         assert!(!path_needs_attention("storage.buffer_dir", &config));
 
         // Turning the dependant on exposes it as unset, and only then.
@@ -1505,15 +1273,15 @@ mod tests {
         // Unset, and imported-but-unauthorized, both ask.
         config.storage.recording_dir = AuthorizedPath::unset();
         assert!(path_needs_attention("storage.recording_dir", &config));
-        config.flavors.retail.log_dir = AuthorizedPath {
-            path: PathBuf::from("/wow/_retail_/Logs"),
+        config.flavors.poe2.log_dir = AuthorizedPath {
+            path: PathBuf::from("/games/Path of Exile 2/logs"),
             authorization: PathAuthorization::ImportedInactive,
         };
-        assert!(path_needs_attention("flavors.retail", &config));
+        assert!(path_needs_attention("flavors.poe2", &config));
 
-        // A flavour that is switched off needs no log folder.
-        config.flavors.retail.enabled = false;
-        assert!(!path_needs_attention("flavors.retail", &config));
+        // A game that is switched off needs no log folder.
+        config.flavors.poe2.enabled = false;
+        assert!(!path_needs_attention("flavors.poe2", &config));
     }
 
     #[test]
@@ -1541,17 +1309,10 @@ mod tests {
         assert_eq!(unlimited.storage.limit, StorageLimit::Unlimited);
         assert_eq!((STORAGE_SPINS[0].get)(&unlimited), 0.0);
         // Dependency sensitivity greys children without erasing values.
-        let mut no_raids = config.clone();
-        no_raids.activities.record_raids = false;
-        assert!(!row_sensitive("activities.min_raid_difficulty", &no_raids));
-        assert!(!row_sensitive("activities.raid_overrun_seconds", &no_raids));
-        assert!(row_sensitive("activities.min_keystone_level", &no_raids));
-        let mut no_dungeons = config.clone();
-        no_dungeons.activities.record_dungeons = false;
-        assert!(!row_sensitive(
-            "activities.min_keystone_level",
-            &no_dungeons
-        ));
+        assert!(!row_sensitive("activities.map_grace_seconds", &config));
+        let mut poe2 = config.clone();
+        poe2.flavors.poe2.enabled = true;
+        assert!(row_sensitive("activities.map_grace_seconds", &poe2));
         assert!(!row_sensitive("storage.buffer_dir", &config));
         let mut separate = config.clone();
         separate.storage.separate_buffer_dir = true;
@@ -1593,13 +1354,13 @@ mod tests {
     fn unsafe_reason_covers_recording_overrun_finalizing_and_media_work() {
         assert_eq!(unsafe_reason(&snapshot(RecorderStatus::Ready)), None);
         assert_eq!(
-            unsafe_reason(&snapshot(RecorderStatus::WaitingForWow)),
+            unsafe_reason(&snapshot(RecorderStatus::WaitingForCapture)),
             None
         );
         assert!(
             unsafe_reason(&snapshot(RecorderStatus::Recording {
-                category: Category::Raids,
-                title: "Boss".to_owned(),
+                category: Category::MapRuns,
+                title: "Bluff".to_owned(),
                 started_unix_ms: 0,
                 manual: false,
                 test: false,

@@ -4,16 +4,11 @@
 /// release notes for this build have already been seen.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub mod activity;
 pub mod config;
 pub mod coordinator;
 pub mod domain;
-pub mod logwatch;
 pub mod media_jobs;
-pub mod meter;
-pub mod parser;
 pub mod poe2;
 pub mod process;
 pub mod recorder;
-pub mod spelldb;
 pub mod storage;

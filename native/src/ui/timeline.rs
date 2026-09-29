@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The combat seek track: one `GtkDrawingArea` drawing activity spans, death
-//! markers, encounter/round boundaries, the playhead, and clip handles
+//! The seek track: one `GtkDrawingArea` drawing time spent out of the map,
+//! death markers, the playhead, and clip handles
 //! directly from `TimelineItem`s. Offsets convert to pixels at draw/hit-test
 //! time; visibility preferences filter drawn items only.
 
@@ -11,16 +11,14 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 
 use poe_recorder::domain::{
-    Category, DeathMarkerVisibility, LibraryEntry, MarkerVisibility, Outcome, TimelineItem,
-    TimelineKind, TimelineShape,
+    Category, DeathMarkerVisibility, LibraryEntry, Outcome, TimelineItem, TimelineKind,
+    TimelineShape,
 };
 
 /// Marker visibility preferences, mirrored from `InterfaceSettings`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MarkerPrefs {
     pub deaths: DeathMarkerVisibility,
-    pub encounters: MarkerVisibility,
-    pub rounds: MarkerVisibility,
 }
 
 /// Clip handles in milliseconds, always `0 <= start < end <= duration`.
@@ -81,12 +79,7 @@ pub fn visible_items(entry: &LibraryEntry, prefs: MarkerPrefs) -> Vec<&TimelineI
                     _ => false,
                 },
             },
-            TimelineKind::Bloodlust => true,
-            TimelineKind::Encounter | TimelineKind::Trash => {
-                prefs.encounters == MarkerVisibility::Visible
-            }
-            TimelineKind::Round => prefs.rounds == MarkerVisibility::Visible,
-            TimelineKind::Activity | TimelineKind::Unknown(_) => true,
+            TimelineKind::Activity => true,
         })
         .collect()
 }
@@ -256,7 +249,6 @@ struct State {
 struct OwnedItem {
     span: bool,
     death: bool,
-    bloodlust: bool,
     start_ms: u64,
     end_ms: u64,
     outcome: Option<Outcome>,
@@ -303,7 +295,6 @@ impl Timeline {
                 items.push(OwnedItem {
                     span: item.shape() == TimelineShape::Span,
                     death: item.kind() == &TimelineKind::Death,
-                    bloodlust: item.kind() == &TimelineKind::Bloodlust,
                     start_ms: item.start_ms(),
                     end_ms: item.end_ms().unwrap_or(item.start_ms()),
                     outcome: item.outcome(),
@@ -366,23 +357,19 @@ impl Timeline {
                 return;
             }
 
-            // Spans (encounter/trash/round/activity) in stable outcome colors.
+            // Spans (time out of the map) in stable outcome colors.
             for item in state.items.borrow().iter().filter(|item| item.span) {
                 let start = ms_to_x(item.start_ms, duration, width);
                 let end = ms_to_x(item.end_ms, duration, width).max(start + 2.0);
-                if item.bloodlust {
-                    cr.set_source_rgba(0.45, 0.16, 0.68, 0.9);
-                } else {
-                    match item.outcome {
-                        Some(Outcome::Win | Outcome::Complete) => {
-                            cr.set_source_rgba(0.12, 1.0, 0.0, 0.55);
-                        }
-                        Some(Outcome::Loss | Outcome::Abandoned) => {
-                            cr.set_source_rgba(1.0, 0.0, 0.0, 0.55);
-                        }
-                        Some(Outcome::Unknown) | None => {
-                            cr.set_source_rgba(0.30, 0.38, 0.46, 0.9);
-                        }
+                match item.outcome {
+                    Some(Outcome::Complete) => {
+                        cr.set_source_rgba(0.12, 1.0, 0.0, 0.55);
+                    }
+                    Some(Outcome::Abandoned) => {
+                        cr.set_source_rgba(1.0, 0.0, 0.0, 0.55);
+                    }
+                    Some(Outcome::Unknown) | None => {
+                        cr.set_source_rgba(0.30, 0.38, 0.46, 0.9);
                     }
                 }
                 rounded_bar(cr, start, mid - 3.0, end - start, 6.0);
@@ -402,10 +389,10 @@ impl Timeline {
                     draw_death_marker(cr, x, mid);
                 } else {
                     match item.outcome {
-                        Some(Outcome::Win | Outcome::Complete) => {
+                        Some(Outcome::Complete) => {
                             cr.set_source_rgba(0.12, 1.0, 0.0, 1.0);
                         }
-                        Some(Outcome::Loss | Outcome::Abandoned) => {
+                        Some(Outcome::Abandoned) => {
                             cr.set_source_rgba(1.0, 0.0, 0.0, 1.0);
                         }
                         Some(Outcome::Unknown) | None => {
@@ -647,63 +634,43 @@ mod tests {
         let mut entry = crate::ui::window::tests::entry(category, "T", 0);
         entry.timeline = timeline;
         entry.player = Some(PlayerSummary {
-            name: "Alice-Realm".to_owned(),
-            realm: None,
-            guid: None,
-            class_id: None,
-            spec_id: None,
+            name: "Alice".to_owned(),
         });
         entry
     }
 
     fn death(name: &str, at: u64) -> TimelineItem {
-        TimelineItem::point(
-            TimelineKind::Death,
-            at,
-            Some(name.to_owned()),
-            Some(Outcome::Loss),
-            None,
-        )
+        TimelineItem::point(TimelineKind::Death, at, Some(name.to_owned()), None, None)
+    }
+
+    fn away(start_ms: u64, end_ms: u64) -> TimelineItem {
+        TimelineItem::span(TimelineKind::Activity, start_ms, end_ms, None, None, None).unwrap()
     }
 
     #[test]
-    fn visibility_filters_deaths_rounds_and_encounters_without_mutating_data() {
+    fn visibility_filters_deaths_without_mutating_data() {
         let entry = entry_with(
-            Category::MythicPlus,
+            Category::MapRuns,
             vec![
                 death("Alice", 1_000),
                 death("Bob", 2_000),
-                TimelineItem::span(TimelineKind::Encounter, 0, 10_000, None, None, None).unwrap(),
-                TimelineItem::span(TimelineKind::Round, 0, 5_000, None, None, None).unwrap(),
-                TimelineItem::span(
-                    TimelineKind::Bloodlust,
-                    3_000,
-                    43_000,
-                    Some("Fury of the Aspects".to_owned()),
-                    None,
-                    None,
-                )
-                .unwrap(),
+                away(3_000, 43_000),
             ],
         );
         let all = MarkerPrefs {
             deaths: DeathMarkerVisibility::All,
-            encounters: MarkerVisibility::Visible,
-            rounds: MarkerVisibility::Visible,
         };
-        assert_eq!(visible_items(&entry, all).len(), 5);
+        assert_eq!(visible_items(&entry, all).len(), 3);
 
         let own_only = MarkerPrefs {
             deaths: DeathMarkerVisibility::Own,
-            encounters: MarkerVisibility::Hidden,
-            rounds: MarkerVisibility::Hidden,
         };
         let visible = visible_items(&entry, own_only);
         assert_eq!(visible.len(), 2);
         assert_eq!(visible[0].label(), Some("Alice"));
-        assert_eq!(visible[1].kind(), &TimelineKind::Bloodlust);
+        assert_eq!(visible[1].kind(), &TimelineKind::Activity);
         // Filtering is presentation only.
-        assert_eq!(entry.timeline.len(), 5);
+        assert_eq!(entry.timeline.len(), 3);
 
         // Clips never draw markers.
         let clip = entry_with(Category::Clip, vec![death("Alice", 1_000)]);
@@ -714,15 +681,12 @@ mod tests {
     fn marker_target_uses_nearest_visible_marker_without_wrapping() {
         let all = MarkerPrefs {
             deaths: DeathMarkerVisibility::All,
-            encounters: MarkerVisibility::Visible,
-            rounds: MarkerVisibility::Visible,
         };
         let entry = entry_with(
-            Category::MythicPlus,
+            Category::MapRuns,
             vec![
                 death("Alice", 5_000),
-                TimelineItem::span(TimelineKind::Encounter, 10_000, 40_000, None, None, None)
-                    .unwrap(),
+                away(10_000, 40_000),
                 death("Bob", 20_000),
             ],
         );
@@ -744,13 +708,16 @@ mod tests {
             None
         );
 
+        // With deaths hidden, only the time out of the map is a target.
         let hidden = MarkerPrefs {
             deaths: DeathMarkerVisibility::None,
-            encounters: MarkerVisibility::Hidden,
-            rounds: MarkerVisibility::Hidden,
         };
         assert_eq!(
             marker_target(&entry, hidden, 15_000, MarkerDirection::Previous),
+            Some(10_000)
+        );
+        assert_eq!(
+            marker_target(&entry, hidden, 15_000, MarkerDirection::Next),
             None
         );
     }

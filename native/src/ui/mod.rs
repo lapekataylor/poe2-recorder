@@ -9,10 +9,8 @@
 //! a producer calls `wake_shell`, so an idle shell never polls. No stores, no
 //! per-widget view models, no string events, no blocking work.
 
-pub mod damage_meter;
 pub mod filters;
 pub mod library;
-pub mod multipov;
 pub mod operational_actions;
 pub mod player;
 pub mod player_backend;
@@ -240,23 +238,6 @@ fn register_ui_resources() {
     gtk4::gio::resources_register(&resource);
 }
 
-/// Register the spell bundle by mmap. The Flatpak installs it beside the
-/// app; development runs fall back to the copy `build.rs` compiled. Without
-/// it the damage meter shows no spell icons or tooltips. Called from `run`,
-/// after logging is up and only in the primary instance.
-fn register_spell_resources() {
-    let spells = [
-        "/app/share/poe-recorder/spells.gresource",
-        concat!(env!("OUT_DIR"), "/spells.gresource"),
-    ]
-    .into_iter()
-    .find_map(|path| gtk4::gio::Resource::load(path).ok());
-    match spells {
-        Some(resource) => gtk4::gio::resources_register(&resource),
-        None => tracing::warn!("spell resource bundle not found; spell icons disabled"),
-    }
-}
-
 /// Hand activation to the primary instance on the session bus. The remote
 /// `run` skips the main loop and unregisters cleanly, so this returns as
 /// soon as the primary has been notified; the return value is the exit code.
@@ -265,44 +246,10 @@ pub fn run_remote(application: adw::Application) -> i32 {
 }
 
 /// Category rail metadata in rail order: label and symbolic icon.
-pub const CATEGORIES: [(Category, &str, &str); 11] = [
+pub const CATEGORIES: [(Category, &str, &str); 3] = [
     (Category::MapRuns, "Map runs", "mark-location-symbolic"),
-    (Category::TwoVTwo, "2v2", "wr-category-2v2-symbolic"),
-    (Category::ThreeVThree, "3v3", "wr-category-3v3-symbolic"),
-    (Category::FiveVFive, "5v5", "wr-category-5v5-symbolic"),
-    (
-        Category::Skirmish,
-        "Skirmish",
-        "wr-category-skirmish-symbolic",
-    ),
-    (
-        Category::SoloShuffle,
-        "Solo Shuffle",
-        "wr-category-solo-shuffle-symbolic",
-    ),
-    (
-        Category::MythicPlus,
-        "Mythic+",
-        "wr-category-mythic-plus-symbolic",
-    ),
-    (Category::Raids, "Raids", "wr-category-raids-symbolic"),
-    (
-        Category::Battlegrounds,
-        "Battlegrounds",
-        "wr-category-battlegrounds-symbolic",
-    ),
     (Category::Manual, "Manual", "wr-category-manual-symbolic"),
     (Category::Clip, "Clips", "wr-category-clips-symbolic"),
-];
-
-/// Test-recording choices, in menu order.
-pub const TEST_CATEGORIES: [(Category, &str, &str); 6] = [
-    (Category::TwoVTwo, "2v2", "2v2"),
-    (Category::ThreeVThree, "3v3", "3v3"),
-    (Category::SoloShuffle, "Solo Shuffle", "solo-shuffle"),
-    (Category::Raids, "Raids", "raids"),
-    (Category::Battlegrounds, "Battlegrounds", "battlegrounds"),
-    (Category::MythicPlus, "Mythic+", "mythic-plus"),
 ];
 
 pub fn category_label(category: &Category) -> &str {
@@ -323,7 +270,6 @@ pub fn run(
     tray: Option<Rc<TrayBackend>>,
     tray_events: Receiver<TrayEvent>,
 ) -> i32 {
-    register_spell_resources();
     let shell: Rc<RefCell<Option<window::Shell>>> = Rc::new(RefCell::new(None));
     {
         let shell_cell = Rc::clone(&shell);

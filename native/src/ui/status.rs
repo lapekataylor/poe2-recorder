@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The sidebar status card: recorder state, elapsed time, Force end,
-//! per-flavour advanced-combat-logging warnings, and the bounded recovered
-//! problem list. The Linux recorder never reports microphone state, so there
+//! The sidebar status card: recorder state, elapsed time, Force end, and
+//! the bounded recovered problem list. The Linux recorder never reports microphone state, so there
 //! is no microphone badge.
 
 use std::cell::{Cell, RefCell};
@@ -59,45 +58,7 @@ pub fn enabled_flavors(config: &Config) -> Vec<&'static str> {
     if config.flavors.poe2.enabled {
         flavors.push("Path of Exile 2");
     }
-    if config.flavors.retail.enabled {
-        flavors.push("Retail");
-    }
-    if config.flavors.retail_ptr.enabled {
-        flavors.push("Retail PTR");
-    }
-    if config.flavors.classic.enabled {
-        flavors.push("Classic");
-    }
-    if config.flavors.classic_ptr.enabled {
-        flavors.push("Classic PTR");
-    }
-    if config.flavors.era.enabled {
-        flavors.push("Era");
-    }
     flavors
-}
-
-/// The `advanced_logging` snapshot field carries short field names; these
-/// are the per-flavour warning rows the card renders. Only a `Config.wtf`
-/// that was read and says "off" warrants a warning; an unreadable one is
-/// unknown, not off, and must stay silent.
-pub fn advanced_logging_warnings(snapshot: &AppSnapshot) -> Vec<String> {
-    snapshot
-        .advanced_logging
-        .iter()
-        .filter(|(_, enabled)| *enabled == Some(false))
-        .map(|(field, _)| {
-            let flavor = match *field {
-                "retail" => "Retail",
-                "retail_ptr" => "Retail PTR",
-                "classic" => "Classic",
-                "classic_ptr" => "Classic PTR",
-                "era" => "Era",
-                other => other,
-            };
-            format!("Advanced combat logging is off for {flavor}.")
-        })
-        .collect()
 }
 
 pub fn view(snapshot: &AppSnapshot) -> StatusView {
@@ -114,7 +75,7 @@ pub fn view(snapshot: &AppSnapshot) -> StatusView {
             show_force_end: false,
             show_spinner: false,
         },
-        RecorderStatus::WaitingForWow => StatusView {
+        RecorderStatus::WaitingForCapture => StatusView {
             title: "Waiting".to_owned(),
             detail: "Waiting for screen capture to start.".to_owned(),
             tone: Tone::Waiting,
@@ -231,17 +192,15 @@ pub struct StatusCard {
     spinner: libadwaita::Spinner,
     detail: gtk4::Label,
     force_end: gtk4::Button,
-    warnings: gtk4::Box,
     problems_expander: gtk4::Expander,
     problems: gtk4::Box,
     tray_note: gtk4::Label,
     sink: ActionSink,
     elapsed_anchor: Rc<Cell<Option<i64>>>,
     timer_running: Rc<Cell<bool>>,
-    /// What the two rebuilt sections were last built from. Rebuilding them per
-    /// snapshot throws away GTK objects, relayouts the rail, and collapses any
-    /// problem row the user had expanded.
-    rendered_warnings: RefCell<Vec<String>>,
+    /// What the problem list was last built from. Rebuilding it per snapshot
+    /// throws away GTK objects, relayouts the rail, and collapses any problem
+    /// row the user had expanded.
     rendered_problems: RefCell<Vec<Problem>>,
     rendered_tone: Cell<Option<Tone>>,
 }
@@ -310,8 +269,6 @@ impl StatusCard {
             });
         }
 
-        let warnings = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-
         let problems = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
         let problems_expander = gtk4::Expander::new(Some("Problems"));
         problems_expander.set_child(Some(&problems));
@@ -329,7 +286,6 @@ impl StatusCard {
         widget.append(&title_row);
         widget.append(&detail);
         widget.append(&force_end);
-        widget.append(&warnings);
         widget.append(&problems_expander);
         widget.append(&tray_note);
 
@@ -341,14 +297,12 @@ impl StatusCard {
             spinner,
             detail,
             force_end,
-            warnings,
             problems_expander,
             problems,
             tray_note,
             sink,
             elapsed_anchor: Rc::new(Cell::new(None)),
             timer_running: Rc::new(Cell::new(false)),
-            rendered_warnings: RefCell::new(Vec::new()),
             rendered_problems: RefCell::new(Vec::new()),
             rendered_tone: Cell::new(None),
         }
@@ -384,30 +338,6 @@ impl StatusCard {
             self.ensure_timer();
         } else {
             self.elapsed.set_visible(false);
-        }
-
-        let warnings = advanced_logging_warnings(snapshot);
-        if *self.rendered_warnings.borrow() != warnings {
-            while let Some(child) = self.warnings.first_child() {
-                self.warnings.remove(&child);
-            }
-            for warning in &warnings {
-                let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-                row.set_tooltip_text(Some(
-                    "Enable advanced combat logging in-game (System → Network) or some stats will be missing.",
-                ));
-                let icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
-                icon.add_css_class("warning");
-                let label = gtk4::Label::new(Some(warning));
-                label.set_xalign(0.0);
-                label.set_wrap(true);
-                label.add_css_class("caption");
-                label.add_css_class("dim-label");
-                row.append(&icon);
-                row.append(&label);
-                self.warnings.append(&row);
-            }
-            *self.rendered_warnings.borrow_mut() = warnings;
         }
 
         self.apply_problems(&snapshot.problems);
@@ -494,8 +424,8 @@ mod tests {
     #[test]
     fn force_end_is_visible_only_for_automatic_recording() {
         let recording = |manual, test| RecorderStatus::Recording {
-            category: Category::MythicPlus,
-            title: "Dungeon".to_owned(),
+            category: Category::MapRuns,
+            title: "Bluff".to_owned(),
             started_unix_ms: 1_000,
             manual,
             test,
@@ -505,25 +435,11 @@ mod tests {
         assert!(!view(&snapshot_with(recording(true, false))).show_force_end);
         assert!(
             !view(&snapshot_with(RecorderStatus::Overrunning {
-                title: "Dungeon".to_owned(),
+                title: "Bluff".to_owned(),
                 started_unix_ms: 1_000,
             }))
             .show_force_end
         );
-    }
-
-    #[test]
-    fn advanced_logging_warns_only_when_config_wtf_says_off() {
-        let mut snapshot = snapshot_with(RecorderStatus::Ready);
-        // Read and off, read and on, and unreadable: only the first warns.
-        snapshot.advanced_logging = vec![
-            ("retail", Some(false)),
-            ("classic", Some(true)),
-            ("era", None),
-        ];
-        let warnings = advanced_logging_warnings(&snapshot);
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("Retail"));
     }
 
     #[test]

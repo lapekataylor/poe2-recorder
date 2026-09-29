@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The persistent player pane: one ClapperGtk video with PoE Recorder's
-//! compact control row, combat timeline, clip mode, and a single-view
-//! viewpoint selector. Volume/mute are process-shared session state; speed,
-//! position, and the clip range are session-only. All playback state lives in
-//! Clapper; this pane only issues commands and mirrors positions.
-//!
-//! Multi-POV grid playback (synchronized 2–4 player grid) was removed from
-//! the product by maintainer decision (2026-07-22); the viewpoint selector
-//! and individual local recordings remain.
+//! compact control row, marker timeline, and clip mode. Volume/mute are
+//! process-shared session state; speed, position, and the clip range are
+//! session-only. All playback state lives in Clapper; this pane only issues
+//! commands and mirrors positions.
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,14 +15,9 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 
 use poe_recorder::coordinator::{AppSnapshot, ClipRange, Command};
-use poe_recorder::domain::{
-    Category, DeathMarkerVisibility, LibraryEntry, MarkerVisibility, RecordingId,
-};
-use poe_recorder::storage;
+use poe_recorder::domain::{Category, DeathMarkerVisibility, LibraryEntry, RecordingId};
 
-use super::damage_meter::DamageMeter;
 use super::library::Selection;
-use super::multipov;
 use super::player_backend::{PlayerBackend, PlayerState, SeekMode, VideoStreamToken};
 use super::timeline::{self, MarkerDirection, MarkerPrefs, Timeline};
 use super::{ActionSink, ShellAction};
@@ -60,11 +50,8 @@ struct Inner {
     speed_button: gtk4::Button,
     mute_button: gtk4::Button,
     volume_scale: gtk4::Scale,
-    pov_dropdown: gtk4::DropDown,
     clip_button: gtk4::Button,
     clip_actions: gtk4::Box,
-    meter_button: gtk4::ToggleButton,
-    meter: DamageMeter,
     marker_button: gtk4::MenuButton,
     previous_marker_button: gtk4::Button,
     next_marker_button: gtk4::Button,
@@ -89,10 +76,8 @@ struct Inner {
 
     entries: RefCell<Arc<Vec<LibraryEntry>>>,
     prefs: Cell<MarkerPrefs>,
-    /// POVs of the selected activity and the id currently loaded.
-    povs: RefCell<Vec<multipov::Pov>>,
+    /// The recording currently loaded.
     active_id: RefCell<Option<RecordingId>>,
-    preferred_player: RefCell<Option<String>>,
     /// The newest selection made while the player was not on screen.
     deferred_selection: RefCell<Option<Selection>>,
 
@@ -139,11 +124,6 @@ impl Player {
         let size_probe = gtk4::DrawingArea::new();
         size_probe.set_can_target(false);
         video_overlay.add_overlay(&size_probe);
-        // The damage-meter overlay sits on the video itself, not the control
-        // row, so it survives the fullscreen bottom-bar collapse.
-        let meter = DamageMeter::new();
-        video_overlay.add_overlay(&meter.widget);
-        meter.attach_drag(&video_overlay);
 
         // One recovery row for playback failure; the library stays usable.
         let error_label = gtk4::Label::new(Some("This recording could not be played."));
@@ -188,9 +168,6 @@ impl Player {
         let next_marker_button = icon_button("media-skip-forward-symbolic", "Next marker");
         previous_marker_button.set_sensitive(false);
         next_marker_button.set_sensitive(false);
-        let meter_button = gtk4::ToggleButton::with_label("Meter");
-        meter_button.set_tooltip_text(Some("Damage meter (M)"));
-        meter_button.update_property(&[gtk4::accessible::Property::Label("Damage meter")]);
         let marker_button = gtk4::MenuButton::new();
         marker_button.set_icon_name("view-list-symbolic");
         marker_button.set_tooltip_text(Some("Marker visibility"));
@@ -204,10 +181,6 @@ impl Player {
         clip_actions.set_visible(false);
         let reveal_button = icon_button("folder-open-symbolic", "Reveal in folder");
         let fullscreen_button = icon_button("view-fullscreen-symbolic", "Fullscreen");
-        let pov_dropdown = gtk4::DropDown::from_strings(&[]);
-        pov_dropdown.set_tooltip_text(Some("Viewpoint"));
-        pov_dropdown.update_property(&[gtk4::accessible::Property::Label("Viewpoint")]);
-        pov_dropdown.set_visible(false);
 
         for widget in [
             play_button.upcast_ref::<gtk4::Widget>(),
@@ -223,10 +196,8 @@ impl Player {
             previous_marker_button.upcast_ref(),
             marker_button.upcast_ref(),
             next_marker_button.upcast_ref(),
-            meter_button.upcast_ref(),
             clip_button.upcast_ref(),
             clip_actions.upcast_ref(),
-            pov_dropdown.upcast_ref(),
             reveal_button.upcast_ref(),
             fullscreen_button.upcast_ref(),
         ] {
@@ -258,14 +229,11 @@ impl Player {
             speed_button,
             mute_button,
             volume_scale,
-            pov_dropdown,
             clip_button,
             clip_actions,
             marker_button,
             previous_marker_button,
             next_marker_button,
-            meter_button,
-            meter,
             reveal_button,
             bottom_bar,
             fullscreen_generation: Cell::new(0),
@@ -276,12 +244,8 @@ impl Player {
             entries: RefCell::new(Arc::new(Vec::new())),
             prefs: Cell::new(MarkerPrefs {
                 deaths: DeathMarkerVisibility::Own,
-                encounters: MarkerVisibility::Visible,
-                rounds: MarkerVisibility::Visible,
             }),
-            povs: RefCell::new(Vec::new()),
             active_id: RefCell::new(None),
-            preferred_player: RefCell::new(None),
             deferred_selection: RefCell::new(None),
             media_usable: Cell::new(false),
             playing: Cell::new(false),
@@ -308,16 +272,7 @@ impl Player {
         video_click.set_propagation_phase(gtk4::PropagationPhase::Capture);
         {
             let this = Rc::clone(&inner);
-            video_click.connect_pressed(move |gesture, n_press, x, y| {
-                // The capture phase runs before the meter's own controllers.
-                // Ask the overlay which widget the press landed on and never
-                // claim meter hits, so meter interaction cannot toggle
-                // playback or fullscreen.
-                if let Some(picked) = this.video_overlay.pick(x, y, gtk4::PickFlags::DEFAULT)
-                    && (picked == this.meter.widget || picked.is_ancestor(&this.meter.widget))
-                {
-                    return;
-                }
+            video_click.connect_pressed(move |gesture, n_press, _, _| {
                 gesture.set_state(gtk4::EventSequenceState::Claimed);
                 this.toggle_playing();
                 if n_press == 2 {
@@ -326,30 +281,6 @@ impl Player {
             });
         }
 
-        // One visibility state behind the control-row toggle, the meter's own
-        // close routes, and the M shortcut, whichever changes it first.
-        {
-            let this = Rc::clone(&inner);
-            inner.meter_button.connect_toggled(move |button| {
-                this.meter.set_visible(button.is_active());
-            });
-        }
-        {
-            let this = Rc::clone(&inner);
-            inner.meter.widget.connect_visible_notify(move |widget| {
-                let visible = widget.is_visible();
-                if this.meter_button.is_active() != visible {
-                    this.meter_button.set_active(visible);
-                }
-            });
-        }
-        // Death-log and occurrence rows seek the video to the event.
-        {
-            let this = Rc::clone(&inner);
-            inner.meter.connect_seek(move |at_ms| {
-                this.request_seek(at_ms as f64 / 1_000.0, SeekMode::Settle);
-            });
-        }
         // Selections made while hidden load once the player is shown.
         {
             let this = Rc::clone(&inner);
@@ -358,14 +289,6 @@ impl Player {
                 if let Some(selection) = deferred {
                     this.set_selection(Some(&selection));
                 }
-            });
-        }
-        // The drag position is pixel margins: any relayout (window resize,
-        // fullscreen transitions) re-clamps them to the overlay allocation.
-        {
-            let this = Rc::clone(&inner);
-            inner.size_probe.connect_resize(move |_, _, _| {
-                this.meter.clamp_position();
             });
         }
         video_overlay.add_controller(video_click);
@@ -421,8 +344,6 @@ impl Player {
         let interface = &snapshot.config.interface;
         let prefs = MarkerPrefs {
             deaths: interface.death_markers,
-            encounters: interface.encounter_markers,
-            rounds: interface.round_markers,
         };
         if inner.prefs.replace(prefs) != prefs {
             inner.refresh_timeline();
@@ -444,7 +365,7 @@ impl Player {
         self.inner.set_selection(selection);
     }
 
-    /// Ask the shell to fit its player pane whenever the active POV changes.
+    /// Ask the shell to fit its player pane whenever the loaded video changes.
     pub fn connect_video_dimensions(&self, handler: impl Fn(u32, u32) + 'static) {
         *self.inner.video_dimensions_handler.borrow_mut() = Some(Rc::new(handler));
     }
@@ -565,18 +486,6 @@ impl Inner {
         empty_reveal.connect_clicked(move |_| this.reveal());
         let this = Rc::clone(self);
         fullscreen_button.connect_clicked(move |_| this.toggle_fullscreen());
-        let this = Rc::clone(self);
-        self.pov_dropdown.connect_selected_notify(move |dropdown| {
-            if this.updating.get() {
-                return;
-            }
-            let index = dropdown.selected() as usize;
-            let pov = this.povs.borrow().get(index).cloned();
-            if let Some(pov) = pov {
-                *this.preferred_player.borrow_mut() = pov.player.clone();
-                this.load_pov(&pov.id, true);
-            }
-        });
     }
 
     // -- selection and loading ----------------------------------------------
@@ -594,56 +503,31 @@ impl Inner {
             *self.deferred_selection.borrow_mut() = Some(selection.clone());
             return;
         }
-        let povs = {
-            let entries = self.entries.borrow();
-            let resolved: Vec<&LibraryEntry> = selection
-                .viewpoints
-                .iter()
-                .filter_map(|id| entries.iter().find(|entry| &entry.id == id))
-                .collect();
-            multipov::povs(&resolved)
-        };
-        // Same activity (e.g. snapshot-driven reselect): keep playback, but
-        // pick up viewpoints that were correlated or removed since.
-        let same_activity = self
-            .active_id
-            .borrow()
-            .as_ref()
-            .is_some_and(|active| selection.viewpoints.contains(active));
-        if same_activity {
-            if *self.povs.borrow() != povs {
-                *self.povs.borrow_mut() = povs;
-                self.rebuild_pov_selector();
-            }
+        // Same recording (e.g. snapshot-driven reselect): keep playback.
+        if self.active_id.borrow().as_ref() == Some(&selection.id) {
             self.refresh_timeline();
             return;
         }
-        if povs.is_empty() {
+        if !self
+            .entries
+            .borrow()
+            .iter()
+            .any(|entry| entry.id == selection.id)
+        {
             self.unload();
             return;
         }
-        let preferred = self.preferred_player.borrow().clone();
-        let chosen = multipov::choose(&povs, preferred.as_deref())
-            .map(|pov| pov.id.clone())
-            .unwrap_or_else(|| selection.id.clone());
-
-        // New activity: stop, leave clip mode, and seek to zero.
-        *self.povs.borrow_mut() = povs;
+        // New recording: stop, leave clip mode, and start at zero.
         self.position_seconds.set(0.0);
-        self.load_pov(&chosen, false);
-        self.rebuild_pov_selector();
+        self.load_entry(&selection.id);
     }
 
-    /// Load one POV. `retain_position` keeps the current progress
-    /// (same-activity POV switch); otherwise playback starts at zero.
-    fn load_pov(self: &Rc<Self>, id: &RecordingId, retain_position: bool) {
+    /// Load one recording and play it from the start.
+    fn load_entry(self: &Rc<Self>, id: &RecordingId) {
         let entries = self.entries.borrow();
         let Some(entry) = entries.iter().find(|entry| &entry.id == id) else {
             return;
         };
-        // Empty until `load_meter` delivers this entry's meter.
-        self.meter.set_entry(None);
-        let sidecar_path = entry.sidecar_path.clone();
         let uri = gtk4::gio::File::for_path(&entry.media_path)
             .uri()
             .to_string();
@@ -661,7 +545,6 @@ impl Inner {
         self.load_generation.set(generation);
         self.seek_in_flight.set(false);
         self.pending_seek.set(None);
-        self.load_meter(id.clone(), sidecar_path, generation);
 
         self.error_bar.set_visible(false);
         self.empty_reveal.set_visible(false);
@@ -702,46 +585,13 @@ impl Inner {
         self.playing.set(true);
         self.play_button
             .set_icon_name("media-playback-pause-symbolic");
-        if retain_position {
-            let position = self.position_seconds.get();
-            self.request_seek(position, SeekMode::Settle);
-        } else {
-            self.position_seconds.set(0.0);
-        }
+        self.position_seconds.set(0.0);
         self.show_position(self.position_seconds.get());
         self.stack.set_visible_child_name("video");
         self.report_video_dimensions(dimensions);
         self.watch_for_video_dimensions(id.clone(), uri, previous_video_stream);
         self.refresh_timeline();
         self.watch_for_failure(generation);
-    }
-
-    /// A sidecar meter can be tens of megabytes, so it is parsed off the GTK
-    /// thread. A result that arrives after another load or an unload belongs
-    /// to a recording no longer shown and is dropped.
-    fn load_meter(self: &Rc<Self>, id: RecordingId, sidecar_path: PathBuf, generation: u64) {
-        let this = Rc::clone(self);
-        gtk4::glib::spawn_future_local(async move {
-            let loaded =
-                gtk4::gio::spawn_blocking(move || storage::load_meter(&sidecar_path)).await;
-            if this.load_generation.get() != generation {
-                return;
-            }
-            let meter = match loaded {
-                Ok(Ok(meter)) => meter,
-                Ok(Err(error)) => {
-                    tracing::warn!(%error, "damage meter could not be loaded");
-                    return;
-                }
-                Err(_) => return,
-            };
-            let entries = this.entries.borrow();
-            if let Some(entry) = entries.iter().find(|entry| entry.id == id) {
-                this.meter.set_entry(Some((entry, meter)));
-                this.meter
-                    .set_position((this.position_seconds.get() * 1_000.0) as u64);
-            }
-        });
     }
 
     fn report_video_dimensions(&self, dimensions: Option<(u32, u32)>) -> bool {
@@ -810,7 +660,6 @@ impl Inner {
             backend.stop();
         }
         *self.active_id.borrow_mut() = None;
-        self.povs.borrow_mut().clear();
         self.playing.set(false);
         self.load_generation
             .set(self.load_generation.get().wrapping_add(1));
@@ -826,8 +675,6 @@ impl Inner {
         self.empty_reveal.set_visible(false);
         self.stack.set_visible_child_name("placeholder");
         self.timeline.set_entry(None, self.prefs.get());
-        self.meter.set_entry(None);
-        self.rebuild_pov_selector();
     }
 
     // -- transport -----------------------------------------------------------
@@ -989,7 +836,6 @@ impl Inner {
         let position_ms = (seconds * 1_000.0) as u64;
         let duration_ms = self.duration_ms.get();
         self.timeline.set_position(position_ms);
-        self.meter.set_position(position_ms);
         let rendered = (position_ms / 1_000, duration_ms);
         if self.time_label_state.replace(Some(rendered)) != Some(rendered) {
             self.time_label.set_text(&format!(
@@ -1017,9 +863,6 @@ impl Inner {
             }
             gtk4::gdk::Key::bracketleft => self.jump_marker(MarkerDirection::Previous),
             gtk4::gdk::Key::bracketright => self.jump_marker(MarkerDirection::Next),
-            gtk4::gdk::Key::m | gtk4::gdk::Key::M => {
-                self.meter.toggle();
-            }
             gtk4::gdk::Key::comma => {
                 // Previous frame while paused: known FPS, else assume 30. The
                 // frame is the point, so this is the one seek worth decoding
@@ -1219,7 +1062,7 @@ impl Inner {
         self.next_marker_button.set_sensitive(usable);
     }
 
-    /// The marker-visibility popover: death radio plus two check rows. Rebuilt
+    /// The marker-visibility popover: the death radio group. Rebuilt
     /// from config so it always reflects the authoritative snapshot.
     fn rebuild_marker_menu(self: &Rc<Self>) {
         let prefs = self.prefs.get();
@@ -1256,34 +1099,6 @@ impl Inner {
             });
             content.append(&radio);
         }
-        for (encounters, label) in [(true, "Encounter segments"), (false, "Round boundaries")] {
-            let check = gtk4::CheckButton::with_label(label);
-            let current = if encounters {
-                prefs.encounters
-            } else {
-                prefs.rounds
-            };
-            check.set_active(current == MarkerVisibility::Visible);
-            let this = Rc::clone(self);
-            check.connect_toggled(move |check| {
-                if this.updating.get() {
-                    return;
-                }
-                let mut prefs = this.prefs.get();
-                let value = if check.is_active() {
-                    MarkerVisibility::Visible
-                } else {
-                    MarkerVisibility::Hidden
-                };
-                if encounters {
-                    prefs.encounters = value;
-                } else {
-                    prefs.rounds = value;
-                }
-                this.dispatch_markers(prefs);
-            });
-            content.append(&check);
-        }
         let popover = gtk4::Popover::new();
         popover.set_child(Some(&content));
         self.marker_button.set_popover(Some(&popover));
@@ -1295,29 +1110,7 @@ impl Inner {
         self.refresh_timeline();
         (self.sink)(ShellAction::Command(Command::SetMarkerVisibility {
             deaths: prefs.deaths,
-            encounters: prefs.encounters,
-            rounds: prefs.rounds,
         }));
-    }
-
-    // -- viewpoint selector ---------------------------------------------------
-
-    fn rebuild_pov_selector(self: &Rc<Self>) {
-        let povs = self.povs.borrow();
-        self.updating.set(true);
-        let labels: Vec<&str> = povs.iter().map(|pov| pov.label.as_str()).collect();
-        self.pov_dropdown
-            .set_model(Some(&gtk4::StringList::new(&labels)));
-        if let Some(index) = self
-            .active_id
-            .borrow()
-            .as_ref()
-            .and_then(|id| povs.iter().position(|pov| &pov.id == id))
-        {
-            self.pov_dropdown.set_selected(index as u32);
-        }
-        self.updating.set(false);
-        self.pov_dropdown.set_visible(povs.len() > 1);
     }
 }
 

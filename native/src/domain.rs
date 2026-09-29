@@ -9,8 +9,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
-pub const BLOODLUST_DURATION_MS: u64 = 40_000;
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RecordingId(String);
@@ -45,14 +43,8 @@ impl fmt::Display for RecordingId {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GameFlavor {
-    Retail,
-    Classic,
-    /// Classic Era log source. Only used to tag parsed events and key per-flavour
-    /// engine state; Era recordings store `Classic` in their metadata.
-    Era,
     /// Path of Exile 2, from its `Client.txt`.
     Poe2,
-    Unknown(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -60,14 +52,6 @@ pub enum GameFlavor {
 pub enum Category {
     /// A Path of Exile 2 waystone map, from entry until the player leaves.
     MapRuns,
-    TwoVTwo,
-    ThreeVThree,
-    FiveVFive,
-    Skirmish,
-    SoloShuffle,
-    MythicPlus,
-    Raids,
-    Battlegrounds,
     Manual,
     Clip,
 }
@@ -75,8 +59,6 @@ pub enum Category {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
-    Win,
-    Loss,
     Complete,
     Abandoned,
     Unknown,
@@ -106,13 +88,6 @@ pub enum DeathMarkerVisibility {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MarkerVisibility {
-    Hidden,
-    Visible,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "gib", rename_all = "snake_case")]
 pub enum StorageLimit {
     Unlimited,
@@ -122,73 +97,11 @@ pub enum StorageLimit {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerSummary {
     pub name: String,
-    pub realm: Option<String>,
-    pub guid: Option<String>,
-    pub class_id: Option<u16>,
-    pub spec_id: Option<u16>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CombatantSummary {
-    pub name: Option<String>,
-    pub realm: Option<String>,
-    pub guid: Option<String>,
-    pub region: Option<String>,
-    pub class_id: Option<u16>,
-    pub spec_id: Option<u16>,
-    pub team_id: Option<u8>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RaidDifficulty {
-    Lfr,
-    Normal,
-    Heroic,
-    Mythic,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoundSummary {
-    pub round: u32,
-    pub outcome: Outcome,
-    pub start_ms: u64,
-    pub duration_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityDetails {
-    Raid {
-        zone_id: Option<u32>,
-        zone_name: Option<String>,
-        encounter_id: Option<u32>,
-        encounter_name: Option<String>,
-        difficulty_id: Option<u32>,
-        difficulty: Option<String>,
-        pull: Option<u32>,
-        boss_percent: Option<u8>,
-    },
-    Dungeon {
-        zone_id: Option<u32>,
-        dungeon_name: Option<String>,
-        map_id: Option<u32>,
-        keystone_level: Option<u32>,
-        affixes: Vec<u32>,
-        upgrade_level: Option<u8>,
-    },
-    ArenaOrBattleground {
-        map_id: Option<u32>,
-        map_name: Option<String>,
-        team_mmr: Option<u32>,
-    },
-    SoloRounds {
-        map_id: Option<u32>,
-        map_name: Option<String>,
-        rounds_won: Option<u8>,
-        rounds_played: Option<u8>,
-        rounds: Vec<RoundSummary>,
-    },
     MapRun {
         /// The game's area id, e.g. `MapHiddenGrotto`.
         area_id: String,
@@ -213,165 +126,18 @@ impl ActivityDetails {
         matches!(
             (category, self),
             (Category::MapRuns, Self::MapRun { .. })
-                | (Category::Raids, Self::Raid { .. })
-                | (Category::MythicPlus, Self::Dungeon { .. })
-                | (
-                    Category::TwoVTwo
-                        | Category::ThreeVThree
-                        | Category::FiveVFive
-                        | Category::Skirmish
-                        | Category::Battlegrounds,
-                    Self::ArenaOrBattleground { .. }
-                )
-                | (Category::SoloShuffle, Self::SoloRounds { .. })
                 | (Category::Clip, Self::Clip { .. })
                 | (Category::Manual, Self::Manual)
         )
     }
 }
 
-/// One metric delta accumulated during a playback interval. `at_ms` is the
-/// media-relative end of that interval, so the UI can include only completed
-/// buckets at the current playhead.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterSample {
-    pub at_ms: u64,
-    pub amount: u64,
-    pub hits: u32,
-    pub overheal: u64,
-    /// Smallest and largest single hit in this interval. Both combine across
-    /// intervals, so a playhead-limited projection stays exact.
-    #[serde(default)]
-    pub min: u64,
-    #[serde(default)]
-    pub max: u64,
-}
-
-/// One damage-meter aggregate: a spell or target bucket for one actor and one
-/// metric. Actor totals derive structurally from the spell entries.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterEntry {
-    pub metric: MeterMetric,
-    /// Spell name (or "Melee"), the interrupted/dispelled spell name, or the
-    /// target name. No spell IDs: names are the persisted keys.
-    pub key: String,
-    /// Destination raid marker (`0x80` = skull) at event time; 0 on spell rows.
-    pub marker: u8,
-    /// Effective amount, or the event count for Interrupts/Dispels.
-    pub amount: u64,
-    pub hits: u32,
-    pub overheal: u64,
-    /// Smallest and largest single hit; `max == 0` means the entry carries no
-    /// per-hit statistics.
-    #[serde(default)]
-    pub min: u64,
-    #[serde(default)]
-    pub max: u64,
-    /// Interval deltas used to reconstruct this entry at the playhead.
-    #[serde(default)]
-    pub samples: Vec<MeterSample>,
-    /// This spell's own per-target split. Spell rows only; empty on target
-    /// rows and on the folded "Other" row.
-    #[serde(default)]
-    pub targets: Vec<MeterEntry>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MeterMetric {
-    Damage,
-    DamageTaken,
-    Healing,
-    Interrupts,
-    Dispels,
-    /// Successful casts: `amount` counts events, like the other count metrics.
-    Casts,
-    /// BUFF auras on friendly players: `amount` is accumulated uptime in
-    /// milliseconds, `hits` the number of applications.
-    Buffs,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MeterDeathEventKind {
-    Damage,
-    Healing,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterDeathEvent {
-    pub kind: MeterDeathEventKind,
-    pub at_ms: u64,
-    pub source_name: String,
-    pub spell_name: String,
-    pub amount: u64,
-    /// HP the unit was left on after this event; the death log draws it as a
-    /// health bar. Zero when the log never reported it.
-    #[serde(default)]
-    pub hp: u64,
-    /// Damage wasted past zero HP; only the killing blow carries any.
-    #[serde(default)]
-    pub overkill: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterDeath {
-    pub guid: String,
-    pub name: String,
-    pub at_ms: u64,
-    /// Max HP of the dead unit, sizing the death log bars. Zero when the log
-    /// never reported it.
-    #[serde(default)]
-    pub max_hp: u64,
-    pub events: Vec<MeterDeathEvent>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterActor {
-    /// Join key for class colours via `LibraryEntry.combatants`.
-    pub guid: String,
-    pub name: String,
-    pub spells: Vec<MeterEntry>,
-    pub targets: Vec<MeterEntry>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterFight {
-    /// Encounter name, "Trash", "Round N", or the activity title.
-    pub label: String,
-    /// Media-relative after finalize; activity-relative in the engine.
-    pub start_ms: u64,
-    pub end_ms: u64,
-    /// First eligible meter event, on the same timeline as `start_ms`.
-    #[serde(default)]
-    pub first_event_ms: Option<u64>,
-    /// First-to-last eligible event; the shared DPS/HPS denominator.
-    pub active_ms: u64,
-    /// Mythic+ trash recorded before the capturing player joined combat.
-    /// Overall includes these fights; Current skips them.
-    #[serde(default)]
-    pub ambient: bool,
-    pub actors: Vec<MeterActor>,
-    #[serde(default)]
-    pub deaths: Vec<MeterDeath>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeterData {
-    #[serde(default)]
-    pub fights: Vec<MeterFight>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TimelineKind {
     Death,
-    Bloodlust,
-    Encounter,
-    Trash,
-    Round,
+    /// Time spent out of the map in the middle of a run.
     Activity,
-    Unknown(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,9 +301,7 @@ pub struct LibraryEntry {
     pub outcome: Outcome,
     pub protected: bool,
     pub tag: Option<String>,
-    pub activity_hash: Option<String>,
     pub player: Option<PlayerSummary>,
-    pub combatants: Vec<CombatantSummary>,
     pub details: ActivityDetails,
     pub timeline: Vec<TimelineItem>,
     pub media: MediaFacts,
@@ -567,16 +331,11 @@ impl LibraryEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CorrelatedActivity {
-    pub primary_id: RecordingId,
-    pub local_pov_ids: Vec<RecordingId>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RecorderStatus {
     SetupRequired,
-    WaitingForWow,
+    /// Screen capture is not running yet.
+    WaitingForCapture,
     Ready,
     Recording {
         category: Category,
@@ -663,6 +422,26 @@ impl fmt::Display for DomainError {
 
 impl std::error::Error for DomainError {}
 
+/// One recording in flight. End-time fields are `None` until the activity
+/// finishes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordingDraft {
+    pub id: RecordingId,
+    pub category: Category,
+    pub flavor: GameFlavor,
+    /// When the activity started, from the game's log.
+    pub started_at_ms: i64,
+    /// Recorded after the activity ends.
+    pub overrun_ms: u64,
+    pub details: ActivityDetails,
+    pub player: Option<PlayerSummary>,
+    pub timeline: Vec<TimelineItem>,
+    pub outcome: Option<Outcome>,
+    pub ended_at_ms: Option<i64>,
+    pub duration_ms: Option<u64>,
+    pub title: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,16 +452,14 @@ mod tests {
             media_path: PathBuf::from("/recordings/example.mkv"),
             sidecar_path: PathBuf::from("/recordings/example.json"),
             category,
-            flavor: GameFlavor::Retail,
+            flavor: GameFlavor::Poe2,
             title: "Example".to_owned(),
             start_unix_ms: 1_700_000_000_000,
             duration_ms: 60_000,
             outcome: Outcome::Unknown,
             protected: false,
             tag: None,
-            activity_hash: Some("activity".to_owned()),
             player: None,
-            combatants: Vec::new(),
             details,
             timeline: Vec::new(),
             media: MediaFacts {
@@ -698,7 +475,7 @@ mod tests {
     #[test]
     fn timeline_rejects_invalid_bounds_and_invalid_json_shapes() {
         assert_eq!(
-            TimelineItem::span(TimelineKind::Encounter, 200, 100, None, None, None),
+            TimelineItem::span(TimelineKind::Activity, 200, 100, None, None, None),
             Err(DomainError::TimelineEndBeforeStart {
                 start_ms: 200,
                 end_ms: 100,
@@ -706,17 +483,17 @@ mod tests {
         );
 
         let invalid_span = r#"{
-            "shape":"span","kind":"round","start_ms":10,"end_ms":null,
+            "shape":"span","kind":"activity","start_ms":10,"end_ms":null,
             "label":null,"outcome":null,"player_reference":null
         }"#;
         assert!(serde_json::from_str::<TimelineItem>(invalid_span).is_err());
 
         let valid = TimelineItem::span(
-            TimelineKind::Round,
+            TimelineKind::Activity,
             10,
             20,
-            Some("Round 1".to_owned()),
-            Some(Outcome::Win),
+            Some("Out of the map".to_owned()),
+            None,
             None,
         )
         .expect("valid span");
@@ -729,22 +506,21 @@ mod tests {
 
     #[test]
     fn category_and_details_must_match() {
-        let raid = ActivityDetails::Raid {
-            zone_id: Some(1),
-            zone_name: Some("Example Raid".to_owned()),
-            encounter_id: Some(2),
-            encounter_name: Some("Example Boss".to_owned()),
-            difficulty_id: Some(16),
-            difficulty: Some("Mythic".to_owned()),
-            pull: Some(3),
-            boss_percent: Some(42),
+        let map_run = ActivityDetails::MapRun {
+            area_id: "MapBluff".to_owned(),
+            map_name: "Bluff".to_owned(),
+            area_level: 80,
+            seed: 7,
+            deaths: 0,
+            portal_trips: 0,
+            away_ms: 0,
         };
 
-        assert!(entry(Category::Raids, raid.clone()).validate().is_ok());
+        assert!(entry(Category::MapRuns, map_run.clone()).validate().is_ok());
         assert_eq!(
-            entry(Category::MythicPlus, raid).validate(),
+            entry(Category::Manual, map_run).validate(),
             Err(DomainError::CategoryDetailsMismatch {
-                category: Category::MythicPlus,
+                category: Category::Manual,
             })
         );
 

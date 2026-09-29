@@ -18,9 +18,8 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
-use crate::activity::RecordingDraft;
 use crate::domain::{
-    ActivityDetails, Category, LibraryEntry, MediaFacts, MeterData, RecordingId, TimelineItem,
+    ActivityDetails, Category, LibraryEntry, MediaFacts, RecordingDraft, RecordingId, TimelineItem,
     TimelineShape, WorkKind, WorkProgress,
 };
 use crate::process;
@@ -443,9 +442,7 @@ impl MediaWorker {
             // Clips are protected so eviction cannot reclaim deliberate work.
             protected: true,
             tag: None,
-            activity_hash: source.activity_hash.clone(),
             player: source.player.clone(),
-            combatants: source.combatants.clone(),
             details: ActivityDetails::Clip {
                 source_recording: source.id.clone(),
                 source_category: source.category.clone(),
@@ -455,10 +452,8 @@ impl MediaWorker {
             media: source.media.clone(),
         };
 
-        // Pre-aggregated fights cannot be re-cut to an arbitrary range, so a
-        // clip carries no meter.
         self.storage
-            .write_new_entry(&entry, &MeterData::default(), &temp)
+            .write_new_entry(&entry, &temp)
             .map_err(|error| {
                 let _ = fs::remove_file(&temp);
                 format!("write clip: {error}")
@@ -921,7 +916,7 @@ mod tests {
     use std::sync::mpsc::{Sender, sync_channel};
     use std::thread;
 
-    use crate::domain::{Codec, GameFlavor, MeterData, Outcome, TimelineKind};
+    use crate::domain::{Codec, GameFlavor, Outcome, TimelineKind};
     use crate::storage::{SIDECAR_SCHEMA_VERSION, test_root};
 
     fn fake_ffmpeg() -> PathBuf {
@@ -1021,43 +1016,40 @@ mod tests {
                 id: RecordingId::new(),
                 media_path,
                 sidecar_path: self.library().join(format!("{name}.json")),
-                category: Category::Raids,
-                flavor: GameFlavor::Retail,
-                title: format!("{name} - Chrome King Gallywix [M] (Kill)"),
+                category: Category::MapRuns,
+                flavor: GameFlavor::Poe2,
+                title: format!("{name} - Bluff"),
                 start_unix_ms: 1_772_323_200_000,
                 duration_ms,
-                outcome: Outcome::Win,
+                outcome: Outcome::Complete,
                 protected: false,
                 tag: None,
-                activity_hash: Some("0f1e2d3c4b5a69788796a5b4c3d2e1f0".to_owned()),
                 player: None,
-                combatants: Vec::new(),
-                details: ActivityDetails::Raid {
-                    zone_id: Some(2769),
-                    zone_name: Some("Undermine".to_owned()),
-                    encounter_id: Some(3009),
-                    encounter_name: Some("Chrome King Gallywix".to_owned()),
-                    difficulty_id: Some(16),
-                    difficulty: Some("M".to_owned()),
-                    pull: None,
-                    boss_percent: Some(0),
+                details: ActivityDetails::MapRun {
+                    area_id: "MapBluff".to_owned(),
+                    map_name: "Bluff".to_owned(),
+                    area_level: 80,
+                    seed: 7,
+                    deaths: 2,
+                    portal_trips: 1,
+                    away_ms: 30_000,
                 },
                 timeline: vec![
                     TimelineItem::point(
                         TimelineKind::Death,
                         5_000,
                         Some("Early".to_owned()),
-                        Some(Outcome::Loss),
+                        None,
                         None,
                     ),
                     TimelineItem::point(
                         TimelineKind::Death,
                         30_000,
                         Some("Inside".to_owned()),
-                        Some(Outcome::Loss),
+                        None,
                         None,
                     ),
-                    TimelineItem::span(TimelineKind::Encounter, 10_000, 40_000, None, None, None)
+                    TimelineItem::span(TimelineKind::Activity, 10_000, 40_000, None, None, None)
                         .expect("span"),
                 ],
                 media: MediaFacts {
@@ -1110,7 +1102,7 @@ mod tests {
     #[test]
     fn clip_job_writes_a_clips_entry_for_the_selected_interval() {
         let mut harness = Harness::new("clip");
-        let source = harness.source("Raid POV", 60_000);
+        let source = harness.source("Map run", 60_000);
         harness
             .jobs
             .send(MediaJob::CreateClip {
@@ -1131,12 +1123,12 @@ mod tests {
             entry.details,
             ActivityDetails::Clip {
                 source_recording: source.id.clone(),
-                source_category: Category::Raids,
+                source_category: Category::MapRuns,
                 source_title: Some(source.title.clone()),
             }
         );
         // The early death is outside the clip; the later one and the truncated
-        // encounter span move to clip-relative offsets.
+        // away span move to clip-relative offsets.
         assert_eq!(entry.timeline.len(), 2);
         assert_eq!(entry.timeline[0].start_ms(), 20_000);
         assert_eq!(entry.timeline[1].start_ms(), 0);
@@ -1188,35 +1180,23 @@ mod tests {
         MediaJob::FinalizeRecording {
             draft: Box::new(RecordingDraft {
                 id: RecordingId::new(),
-                category: Category::Raids,
-                flavor: GameFlavor::Retail,
+                category: Category::Manual,
+                flavor: GameFlavor::Poe2,
                 started_at_ms: 1_772_323_200_000,
                 overrun_ms: 15_000,
-                details: ActivityDetails::Raid {
-                    zone_id: Some(2769),
-                    zone_name: Some("Undermine".to_owned()),
-                    encounter_id: Some(3009),
-                    encounter_name: Some("Chrome King Gallywix".to_owned()),
-                    difficulty_id: Some(16),
-                    difficulty: Some("M".to_owned()),
-                    pull: None,
-                    boss_percent: Some(0),
-                },
+                details: ActivityDetails::Manual,
                 player: None,
-                combatants: Vec::new(),
                 timeline: vec![TimelineItem::point(
                     TimelineKind::Death,
                     20_000,
                     Some("Testone".to_owned()),
-                    Some(Outcome::Loss),
+                    None,
                     None,
                 )],
-                outcome: Some(Outcome::Win),
+                outcome: Some(Outcome::Unknown),
                 ended_at_ms: Some(1_772_323_270_000),
                 duration_ms: Some(85_000),
-                title: Some("Testone - Chrome King Gallywix [M] (Kill)".to_owned()),
-                activity_hash: Some("0f1e2d3c4b5a69788796a5b4c3d2e1f0".to_owned()),
-                meter: MeterData::default(),
+                title: Some("Manual recording".to_owned()),
             }),
             artifacts: CaptureArtifacts {
                 replay,
@@ -1413,16 +1393,16 @@ mod tests {
         };
         assert_eq!(map_run_keep_ms(&draft, &short, 3_000), None);
         // Other categories are never cut.
-        let mut raid = draft.clone();
-        raid.category = Category::Raids;
-        assert_eq!(map_run_keep_ms(&raid, &artifacts, 3_000), None);
+        let mut manual = draft.clone();
+        manual.category = Category::Manual;
+        assert_eq!(map_run_keep_ms(&manual, &artifacts, 3_000), None);
     }
 
     #[test]
     fn shutdown_terminates_a_silent_child_and_leaves_no_process() {
         let mut harness = Harness::new("shutdown-silent");
         harness.set_mode("silent");
-        let source = harness.source("Raid POV", 60_000);
+        let source = harness.source("Map run", 60_000);
         harness
             .jobs
             .send(MediaJob::CreateClip {
@@ -1499,7 +1479,7 @@ mod tests {
     fn progress_is_parsed_incrementally_while_ffmpeg_runs() {
         let mut harness = Harness::new("progress");
         harness.set_mode("chatty");
-        let source = harness.source("Raid POV", 60_000);
+        let source = harness.source("Map run", 60_000);
         harness
             .jobs
             .send(MediaJob::CreateClip {
@@ -1523,7 +1503,7 @@ mod tests {
     fn a_failed_job_reports_the_ffmpeg_log_tail() {
         let mut harness = Harness::new("failure");
         harness.set_mode("fail");
-        let source = harness.source("Raid POV", 60_000);
+        let source = harness.source("Map run", 60_000);
         harness
             .jobs
             .send(MediaJob::CreateClip {

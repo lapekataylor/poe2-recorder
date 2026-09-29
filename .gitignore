@@ -25,3 +25,7 @@ __pycache__/
 
 # Spell database fetch cache (scripts/fetch-spell-data.py)
 /scripts/.cache-spelldb/
+
+# Output of scripts/fake-poe2-log.py
+/test-logs/
+/native/poe2-log/target/

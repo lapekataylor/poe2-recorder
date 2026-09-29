@@ -1,0 +1,9 @@
+2026/09/28 12:38:45 3103000 01e16928 [DEBUG Client 35092] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:38:45 3103000 2327131a [INFO Client 35092] [SCENE] Set Source [Felled Hideout]
+2026/09/28 12:38:50 3108000 b854b901 [DEBUG Client 35092] Generating level 72 area "MapHiddenGrotto" with seed 2002
+2026/09/28 12:38:50 3108000 56a9f6bb [INFO Client 35092] [SCENE] Set Source [MapHiddenGrotto]
+2026/09/28 12:39:50 3168000 432b49b4 [INFO Client 35092] : TestExile has been slain.
+2026/09/28 12:39:55 3173000 ed984c48 [DEBUG Client 35092] Generating level 72 area "MapHiddenGrotto" with seed 2002
+2026/09/28 12:39:55 3173000 0856dddd [INFO Client 35092] [SCENE] Set Source [MapHiddenGrotto]
+2026/09/28 12:41:25 3263000 7f506359 [DEBUG Client 35092] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:41:25 3263000 b81f0ce0 [INFO Client 35092] [SCENE] Set Source [Felled Hideout]

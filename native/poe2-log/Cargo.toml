@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "poe2-log"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+# No dependencies on purpose: this crate builds and tests on any machine,
+# without GTK or the Linux capture stack.

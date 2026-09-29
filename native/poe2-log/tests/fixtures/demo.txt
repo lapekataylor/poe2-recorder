@@ -1,0 +1,20 @@
+2026/09/28 12:38:45 1385000 276becc6 [DEBUG Client 21592] Generating level 15 area "G1_town" with seed 1
+2026/09/28 12:38:45 1385000 e0b023c9 [INFO Client 21592] [SCENE] Set Source [Clearfell Encampment]
+2026/09/28 12:38:55 1395000 556a2d50 [DEBUG Client 21592] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:38:55 1395000 28c28ca4 [INFO Client 21592] [SCENE] Set Source [Felled Hideout]
+2026/09/28 12:39:00 1400000 eab78cc3 [DEBUG Client 21592] Generating level 74 area "MapWillow" with seed 7007
+2026/09/28 12:39:00 1400000 e85acca8 [INFO Client 21592] [SCENE] Set Source [MapWillow]
+2026/09/28 12:39:30 1430000 fb248d79 [INFO Client 21592] [WINDOW] Cursor released
+2026/09/28 12:40:00 1460000 ff49b795 [INFO Client 21592] : TestExile has been slain.
+2026/09/28 12:40:05 1465000 2721b216 [DEBUG Client 21592] Generating level 74 area "MapWillow" with seed 7007
+2026/09/28 12:40:05 1465000 c6f75b49 [INFO Client 21592] [SCENE] Set Source [MapWillow]
+2026/09/28 12:40:45 1505000 dec9fff0 [DEBUG Client 21592] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:40:45 1505000 f61eda48 [INFO Client 21592] [SCENE] Set Source [Felled Hideout]
+2026/09/28 12:41:05 1525000 bd3097e4 [DEBUG Client 21592] Generating level 74 area "MapWillow" with seed 7007
+2026/09/28 12:41:05 1525000 a821657b [INFO Client 21592] [SCENE] Set Source [MapWillow]
+2026/09/28 12:42:05 1585000 a9eec9b4 [DEBUG Client 21592] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:42:05 1585000 57d6e65a [INFO Client 21592] [SCENE] Set Source [Felled Hideout]
+2026/09/28 12:42:20 1600000 629a5ba7 [DEBUG Client 21592] Generating level 75 area "MapBluff" with seed 8008
+2026/09/28 12:42:20 1600000 727cce11 [INFO Client 21592] [SCENE] Set Source [MapBluff]
+2026/09/28 12:43:50 1690001 c533977a [DEBUG Client 21592] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:43:50 1690001 9eb3e406 [INFO Client 21592] [SCENE] Set Source [Felled Hideout]

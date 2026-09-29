@@ -1,0 +1,11 @@
+2026/09/28 12:38:45 555000 3ff3cd96 [DEBUG Client 25349] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:38:45 555000 95dfc6c1 [INFO Client 25349] [SCENE] Set Source [Felled Hideout]
+2026/09/28 12:38:50 560000 cec24a48 [DEBUG Client 25349] Generating level 74 area "MapWillow" with seed 3003
+2026/09/28 12:38:50 560000 7405ab5a [INFO Client 25349] [SCENE] Set Source [MapWillow]
+2026/09/28 12:39:50 620000 9badd5e2 [DEBUG Client 25349] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:39:50 620000 84e26510 [INFO Client 25349] [SCENE] Set Source [Felled Hideout]
+2026/09/28 12:40:10 640000 e27062ee [INFO Client 25349] #Global: SomePlayer: anyone selling waystones?
+2026/09/28 12:40:10 640000 54e32b0d [DEBUG Client 25349] Generating level 74 area "MapWillow" with seed 3003
+2026/09/28 12:40:10 640000 f1c446a2 [INFO Client 25349] [SCENE] Set Source [MapWillow]
+2026/09/28 12:41:40 730000 cb187039 [DEBUG Client 25349] Generating level 1 area "HideoutFelled" with seed 1
+2026/09/28 12:41:40 730000 3411202b [INFO Client 25349] [SCENE] Set Source [Felled Hideout]

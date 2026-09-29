@@ -55,6 +55,10 @@ modules:
       - type: dir
         path: ../native
         dest: native
+        # Local cargo output: gigabytes the offline build does not need.
+        skip:
+          - target
+          - poe2-log/target
       - type: dir
         path: ../data
         dest: data

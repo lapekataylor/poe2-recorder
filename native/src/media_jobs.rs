@@ -31,6 +31,12 @@ use crate::storage::{CombinedMedia, Storage, now_unix_ms, sanitize_name, unique_
 /// GTK snapshot repeat work.
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Kept after the player left a Path of Exile 2 map: the portal and the
+/// start of the loading screen, plus slack for whole-second log times.
+const MAP_TAIL_MS: u64 = 5_000;
+/// Cutting less than this is not worth another FFmpeg pass.
+const MIN_TRIM_MS: u64 = 5_000;
+
 #[derive(Clone, Debug)]
 pub struct MediaConfig {
     pub ffmpeg: PathBuf,
@@ -207,10 +213,11 @@ impl MediaWorker {
             .job_file("final", "mp4")
             .map_err(|error| format!("final media temp: {error}"))?;
 
-        let combined = match self.combine(artifacts, &final_temp)? {
+        let mut combined = match self.combine(artifacts, &final_temp)? {
             Some(actual_replay_ms) => CombinedMedia {
                 temp_media: final_temp.clone(),
                 actual_replay_ms,
+                trimmed_ms: None,
                 facts,
             },
             None => {
@@ -218,6 +225,16 @@ impl MediaWorker {
                 return Ok(None);
             }
         };
+
+        if let Some(keep_ms) = map_run_keep_ms(draft, artifacts, combined.actual_replay_ms) {
+            match self.trim_tail(&final_temp, keep_ms)? {
+                Some(trimmed) => combined.trimmed_ms = trimmed.then_some(keep_ms),
+                None => {
+                    let _ = fs::remove_file(&final_temp);
+                    return Ok(None);
+                }
+            }
+        }
 
         if fs::metadata(&combined.temp_media)
             .map(|meta| meta.len())
@@ -320,6 +337,37 @@ impl MediaWorker {
             FfmpegOutcome::Done { .. } => Ok(Some(actual_replay_ms)),
             FfmpegOutcome::Cancelled => Ok(None),
             FfmpegOutcome::Failed { .. } => regular_only(self),
+        }
+    }
+
+    /// Cut `media` to its first `keep_ms` in place. `Some(false)` keeps the
+    /// whole file when FFmpeg fails; `None` means cancelled.
+    fn trim_tail(&mut self, media: &Path, keep_ms: u64) -> Result<Option<bool>, String> {
+        let trimmed = self
+            .job_file("final-trim", "mp4")
+            .map_err(|error| format!("trim temp: {error}"))?;
+        match self.run_ffmpeg(
+            WorkKind::Finalize,
+            trim_end_args(media, keep_ms, &trimmed),
+            Some(keep_ms),
+        ) {
+            FfmpegOutcome::Done { .. } => match fs::rename(&trimmed, media) {
+                Ok(()) => Ok(Some(true)),
+                Err(error) => {
+                    let _ = fs::remove_file(&trimmed);
+                    tracing::warn!(%error, "trimmed recording could not replace the original");
+                    Ok(Some(false))
+                }
+            },
+            FfmpegOutcome::Cancelled => {
+                let _ = fs::remove_file(&trimmed);
+                Ok(None)
+            }
+            FfmpegOutcome::Failed { message } => {
+                let _ = fs::remove_file(&trimmed);
+                tracing::warn!(%message, "recording tail could not be trimmed; keeping all of it");
+                Ok(Some(false))
+            }
         }
     }
 
@@ -657,6 +705,44 @@ impl ProgressReader {
         }
         latest
     }
+}
+
+/// How much of a finished map run's media to keep: up to shortly after the
+/// player left the map. The capture ran on through the grace period, waiting
+/// to see whether they came back. `None` when there is nothing worth cutting.
+fn map_run_keep_ms(
+    draft: &RecordingDraft,
+    artifacts: &CaptureArtifacts,
+    actual_replay_ms: u64,
+) -> Option<u64> {
+    if draft.category != Category::MapRuns {
+        return None;
+    }
+    let media_start_ms = artifacts.regular_started_at_ms - actual_replay_ms as i64;
+    let captured_ms = actual_replay_ms
+        + (artifacts.regular_stopped_at_ms - artifacts.regular_started_at_ms).max(0) as u64;
+    let keep_ms = u64::try_from(draft.ended_at_ms? - media_start_ms).ok()? + MAP_TAIL_MS;
+    (keep_ms + MIN_TRIM_MS <= captured_ms).then_some(keep_ms)
+}
+
+/// Keep the first `keep_ms` of `media` with a pure stream copy.
+fn trim_end_args(media: &Path, keep_ms: u64, output: &Path) -> Vec<String> {
+    vec![
+        "-nostdin".to_owned(),
+        "-hide_banner".to_owned(),
+        "-i".to_owned(),
+        media.to_string_lossy().into_owned(),
+        "-t".to_owned(),
+        format_seconds(keep_ms),
+        "-map".to_owned(),
+        "0".to_owned(),
+        "-c".to_owned(),
+        "copy".to_owned(),
+        "-movflags".to_owned(),
+        "+faststart".to_owned(),
+        "-y".to_owned(),
+        output.to_string_lossy().into_owned(),
+    ]
 }
 
 /// Take the final `seconds` of the replay without needing its duration.
@@ -1226,6 +1312,110 @@ mod tests {
             "regular bytes"
         );
         harness.shutdown_and_join();
+    }
+
+    /// A map run that ended 40 s in; the capture kept going through the
+    /// grace period until 75 s.
+    fn map_run_job(harness: &Harness) -> MediaJob {
+        let MediaJob::FinalizeRecording {
+            mut draft,
+            artifacts,
+            facts,
+        } = finalize_job(harness, true)
+        else {
+            unreachable!()
+        };
+        draft.category = Category::MapRuns;
+        draft.flavor = GameFlavor::Poe2;
+        draft.overrun_ms = 0;
+        draft.details = ActivityDetails::MapRun {
+            area_id: "MapBluff".to_owned(),
+            map_name: "Bluff".to_owned(),
+            area_level: 80,
+            seed: 7,
+            deaths: 1,
+            portal_trips: 0,
+            away_ms: 0,
+        };
+        draft.ended_at_ms = Some(draft.started_at_ms + 40_000);
+        draft.timeline.push(TimelineItem::point(
+            TimelineKind::Death,
+            60_000,
+            Some("After leaving".to_owned()),
+            None,
+            None,
+        ));
+        MediaJob::FinalizeRecording {
+            draft,
+            artifacts,
+            facts,
+        }
+    }
+
+    #[test]
+    fn a_map_run_is_cut_shortly_after_the_player_left() {
+        let mut harness = Harness::new("map-trim");
+        harness.jobs.send(map_run_job(&harness)).expect("send");
+
+        let MediaEvent::Completed { entry, .. } = harness.outcome() else {
+            panic!("finalize did not complete");
+        };
+        // Media starts 2 s before the run (3 s of replay in front of a capture
+        // that began 5 s in): 38 s of run up to leaving, plus the 5 s tail.
+        assert_eq!(entry.duration_ms, 43_000);
+        let argv = harness.argv();
+        assert!(
+            argv.windows(2)
+                .any(|pair| pair[0] == "-t" && pair[1] == "43")
+        );
+        // The death at 20 s stays; the one after the cut is gone.
+        assert_eq!(entry.timeline.len(), 1);
+        assert_eq!(entry.timeline[0].start_ms(), 18_000);
+        harness.shutdown_and_join();
+    }
+
+    #[test]
+    fn a_failed_tail_trim_keeps_the_whole_map_run() {
+        let mut harness = Harness::new("map-trim-fail");
+        harness.set_mode("fail");
+        harness.jobs.send(map_run_job(&harness)).expect("send");
+
+        let MediaEvent::Completed { entry, .. } = harness.outcome() else {
+            panic!("finalize did not complete");
+        };
+        // Every FFmpeg pass fails: the regular recording alone, uncut.
+        assert_eq!(entry.duration_ms, 70_000);
+        assert_eq!(
+            fs::read_to_string(&entry.media_path).expect("media"),
+            "regular bytes"
+        );
+        harness.shutdown_and_join();
+    }
+
+    #[test]
+    fn only_a_real_map_run_tail_is_cut() {
+        let job = {
+            let harness = Harness::new("map-trim-plan");
+            let MediaJob::FinalizeRecording {
+                draft, artifacts, ..
+            } = map_run_job(&harness)
+            else {
+                unreachable!()
+            };
+            (draft, artifacts)
+        };
+        let (draft, artifacts) = job;
+        assert_eq!(map_run_keep_ms(&draft, &artifacts, 3_000), Some(43_000));
+        // Nothing worth cutting when the capture stopped right after leaving.
+        let short = CaptureArtifacts {
+            regular_stopped_at_ms: draft.started_at_ms + 46_000,
+            ..artifacts.clone()
+        };
+        assert_eq!(map_run_keep_ms(&draft, &short, 3_000), None);
+        // Other categories are never cut.
+        let mut raid = draft.clone();
+        raid.category = Category::Raids;
+        assert_eq!(map_run_keep_ms(&raid, &artifacts, 3_000), None);
     }
 
     #[test]

@@ -57,6 +57,8 @@ pub struct CombinedMedia {
     /// Usable replay lead-in actually present at the front of `temp_media`.
     /// Zero for the regular-only fallback.
     pub actual_replay_ms: u64,
+    /// Length after the tail was cut off; `None` keeps the whole capture.
+    pub trimmed_ms: Option<u64>,
     pub facts: MediaFacts,
 }
 
@@ -297,7 +299,10 @@ impl Storage {
             .regular_stopped_at_ms
             .saturating_sub(artifacts.regular_started_at_ms)
             .max(0) as u64;
-        let duration_ms = media.actual_replay_ms + regular_ms;
+        let captured_ms = media.actual_replay_ms + regular_ms;
+        let duration_ms = media
+            .trimmed_ms
+            .map_or(captured_ms, |trimmed| trimmed.min(captured_ms));
 
         let title = draft
             .title
@@ -2188,6 +2193,7 @@ mod tests {
                     temp_media: temp_media.clone(),
                     // Eight seconds of usable replay in front of a regular
                     // recording that started five seconds after the activity.
+                    trimmed_ms: None,
                     actual_replay_ms: 8_000,
                     facts: MediaFacts {
                         fps: Some(60),
@@ -2273,6 +2279,7 @@ mod tests {
                 &artifacts(&tree, false),
                 &CombinedMedia {
                     temp_media,
+                    trimmed_ms: None,
                     actual_replay_ms: 0,
                     facts: MediaFacts {
                         fps: None,
@@ -2355,6 +2362,7 @@ mod tests {
                 &artifacts(&tree, false),
                 &CombinedMedia {
                     temp_media,
+                    trimmed_ms: None,
                     actual_replay_ms: 0,
                     facts: MediaFacts {
                         fps: Some(60),

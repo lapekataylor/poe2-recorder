@@ -78,6 +78,9 @@ pub struct FlavorSettings {
     pub classic: FlavorConfig,
     pub classic_ptr: FlavorConfig,
     pub era: FlavorConfig,
+    /// Path of Exile 2: its `logs` folder, which holds `Client.txt`.
+    #[serde(default)]
+    pub poe2: FlavorConfig,
 }
 
 impl FlavorSettings {
@@ -109,6 +112,14 @@ pub struct ActivitySettings {
     pub current_raid_only: bool,
     pub raid_overrun_seconds: u32,
     pub dungeon_overrun_seconds: u32,
+    /// How long a Path of Exile 2 map run waits for the player to come back
+    /// from the hideout before it ends.
+    #[serde(default = "default_map_grace_seconds")]
+    pub map_grace_seconds: u32,
+}
+
+fn default_map_grace_seconds() -> u32 {
+    (poe2_log::tracker::DEFAULT_GRACE_MS / 1_000) as u32
 }
 
 impl Default for ActivitySettings {
@@ -129,6 +140,7 @@ impl Default for ActivitySettings {
             current_raid_only: false,
             raid_overrun_seconds: 15,
             dungeon_overrun_seconds: 5,
+            map_grace_seconds: default_map_grace_seconds(),
         }
     }
 }
@@ -324,18 +336,19 @@ impl Config {
             );
         }
 
-        if !self.any_flavor_enabled() {
+        if !self.any_flavor_enabled() && !self.flavors.poe2.enabled {
             problems.push(ValidationProblem::new(
                 "flavors",
-                "Enable at least one World of Warcraft flavor.",
+                "Enable Path of Exile 2 or a World of Warcraft flavor.",
             ));
         }
 
         for (field, flavor) in self.flavors.in_field_order() {
             validate_flavor(&mut problems, field, flavor, self.validate_log_paths);
         }
+        validate_poe2(&mut problems, &self.flavors.poe2, self.validate_log_paths);
 
-        if !self.activities.any_enabled() {
+        if self.any_flavor_enabled() && !self.activities.any_enabled() {
             problems.push(ValidationProblem::new(
                 "activities",
                 "Enable at least one automatic activity type.",
@@ -371,6 +384,13 @@ impl Config {
         }
         for (field, flavor) in self.flavors.in_field_order() {
             validate_path_state(&mut problems, field, &flavor.log_dir);
+        }
+        validate_path_state(&mut problems, "flavors.poe2", &self.flavors.poe2.log_dir);
+        if self.activities.map_grace_seconds > 1_800 {
+            problems.push(ValidationProblem::new(
+                "activities.map_grace_seconds",
+                "The map grace period must be between 0 and 1800 seconds.",
+            ));
         }
         if !(15..=60).contains(&self.capture.fps) {
             problems.push(ValidationProblem::new(
@@ -535,6 +555,39 @@ fn validate_flavor(
         problems.push(ValidationProblem::new(
             field,
             "Choose this flavor's World of Warcraft Logs directory.",
+        ));
+    }
+}
+
+fn validate_poe2(
+    problems: &mut Vec<ValidationProblem>,
+    flavor: &FlavorConfig,
+    validate_log_paths: bool,
+) {
+    let field = "flavors.poe2";
+    if !flavor.enabled {
+        return;
+    }
+    if flavor.log_dir.path.as_os_str().is_empty() {
+        problems.push(ValidationProblem::new(
+            field,
+            "Choose the Path of Exile 2 logs directory.",
+        ));
+    } else if !flavor.log_dir.is_authorized() {
+        problems.push(ValidationProblem::new(
+            field,
+            "Choose the Path of Exile 2 logs directory again to authorize access.",
+        ));
+    } else if validate_log_paths
+        && !flavor
+            .log_dir
+            .path
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("logs"))
+    {
+        problems.push(ValidationProblem::new(
+            field,
+            "Choose the logs directory inside the Path of Exile 2 install folder.",
         ));
     }
 }

@@ -33,6 +33,7 @@ use crate::domain::{
 use crate::logwatch::LogTailer;
 use crate::media_jobs::{MediaConfig, MediaControl, MediaEvent, MediaJob, MediaWorker};
 use crate::parser::{CombatEvent, ParseTimeContext, ParsedEvent, PlayerObservationKind};
+use crate::poe2::{Poe2Action, Poe2Source};
 use crate::recorder::{
     CaptureArtifacts, CaptureConfig, Recorder, RecorderError, RecorderEvent, RecordingMode,
     StartRequest, Timeouts,
@@ -45,6 +46,9 @@ use crate::storage::{EntryUpdate, LibraryIndex, Storage, now_unix_ms};
 /// inside a flush gap and discarded before its player is identified.
 const RETAIL_DATA_TIMEOUT_MS: i64 = 10 * 60_000;
 const CLASSIC_DATA_TIMEOUT_MS: i64 = 2 * 60_000;
+/// Path of Exile 2 writes nothing for up to ~10 minutes of normal play in a
+/// map; this only catches a crash or a closed game.
+const POE2_DATA_TIMEOUT_MS: i64 = 20 * 60_000;
 /// Commands handled per tick before the loop returns to polling.
 const COMMAND_BATCH: usize = 16;
 /// Bounded problem list surfaced in the snapshot.
@@ -298,6 +302,8 @@ pub struct Coordinator {
     armed: bool,
     storage: Storage,
     tailers: Vec<LogTailer>,
+    /// Path of Exile 2 map runs, when enabled.
+    poe2: Option<Poe2Source>,
     /// Per flavour: wall-clock and log time of the newest observed event.
     last_event: HashMap<GameFlavor, (i64, i64)>,
     index: LibraryIndex,
@@ -375,6 +381,7 @@ impl Coordinator {
             armed: false,
             storage,
             tailers: Vec::new(),
+            poe2: None,
             last_event: HashMap::new(),
             index: LibraryIndex::default(),
             active: None,
@@ -681,6 +688,12 @@ impl Coordinator {
     // --- Log polling and the activity engine ---
 
     fn open_tailers(&mut self) -> bool {
+        // A run in progress would lose its tracker state: finish it first.
+        if let Some(mut source) = self.poe2.take() {
+            for action in source.force_end(now_unix_ms()) {
+                self.apply_poe2(action);
+            }
+        }
         self.tailers.clear();
         self.advanced_logging.clear();
         self.last_event.clear();
@@ -695,6 +708,25 @@ impl Coordinator {
                     all_opened = false;
                     self.push_problem(
                         format!("The {field} log folder could not be watched."),
+                        Some(error.to_string()),
+                        Some(RecoveryAction::OpenSettings),
+                    );
+                }
+            }
+        }
+        let poe2 = &self.config.flavors.poe2;
+        if poe2.enabled && !poe2.log_dir.path.as_os_str().is_empty() {
+            let grace_ms = i64::from(self.config.activities.map_grace_seconds) * 1_000;
+            match Poe2Source::open(
+                &poe2.log_dir.path,
+                self.setup.media.utc_offset_minutes,
+                grace_ms,
+            ) {
+                Ok(source) => self.poe2 = Some(source),
+                Err(error) => {
+                    all_opened = false;
+                    self.push_problem(
+                        "The Path of Exile 2 logs folder could not be watched.",
                         Some(error.to_string()),
                         Some(RecoveryAction::OpenSettings),
                     );
@@ -718,6 +750,32 @@ impl Coordinator {
         for event in events {
             self.feed(event);
         }
+        let Some(source) = self.poe2.as_mut() else {
+            return;
+        };
+        let now_ms = now_unix_ms();
+        let actions = match source.poll(now_ms) {
+            Ok(actions) => actions,
+            Err(error) => {
+                tracing::warn!(%error, "Path of Exile 2 log poll failed");
+                Vec::new()
+            }
+        };
+        if let Some(read_at_ms) = source.last_read_ms() {
+            self.last_event
+                .insert(GameFlavor::Poe2, (read_at_ms, read_at_ms));
+        }
+        for action in actions {
+            self.apply_poe2(action);
+        }
+    }
+
+    fn apply_poe2(&mut self, action: Poe2Action) {
+        self.dirty = true;
+        match action {
+            Poe2Action::Begin(draft) => self.begin(*draft, 0),
+            Poe2Action::Complete(draft) => self.finish(*draft),
+        }
     }
 
     /// The single entry point for parsed events, shared by live logs and test
@@ -739,26 +797,7 @@ impl Coordinator {
                 let Some(draft) = self.engine.take_finished(&id) else {
                     return;
                 };
-                // The activity both began and ended while the previous capture
-                // was flushing. The replay buffer still holds it, so keep the
-                // authoritative finished draft and let `capture_ended` start
-                // and immediately stop its capture.
-                if let Some(deferred) = self.deferred_begin.as_mut()
-                    && deferred.draft.id == id
-                {
-                    *deferred.draft = draft;
-                    deferred.finished = true;
-                    return;
-                }
-                let Some(active) = self.active.as_mut() else {
-                    return;
-                };
-                if active.draft.id != id {
-                    return;
-                }
-                let overrun_ms = draft.overrun_ms as i64;
-                active.draft = draft;
-                active.stop_at_ms = Some(now_unix_ms() + overrun_ms);
+                self.finish(draft);
             }
             ActivityAction::Discard { id, reason } => {
                 let _ = self.engine.take_finished(&id);
@@ -783,6 +822,30 @@ impl Coordinator {
                 }
             }
         }
+    }
+
+    /// An activity ended: stop its capture once the draft's overrun is over.
+    fn finish(&mut self, draft: RecordingDraft) {
+        // The activity both began and ended while the previous capture was
+        // flushing. The replay buffer still holds it, so keep the
+        // authoritative finished draft and let `capture_ended` start and
+        // immediately stop its capture.
+        if let Some(deferred) = self.deferred_begin.as_mut()
+            && deferred.draft.id == draft.id
+        {
+            *deferred.draft = draft;
+            deferred.finished = true;
+            return;
+        }
+        let Some(active) = self.active.as_mut() else {
+            return;
+        };
+        if active.draft.id != draft.id {
+            return;
+        }
+        let overrun_ms = draft.overrun_ms as i64;
+        active.draft = draft;
+        active.stop_at_ms = Some(now_unix_ms() + overrun_ms);
     }
 
     /// `late_by_ms` is how long after the activity's start its capture begins:
@@ -854,6 +917,12 @@ impl Coordinator {
 
     /// Clear the engine's activity for a flavour without recording anything.
     fn drop_activity(&mut self, flavor: &GameFlavor) {
+        if *flavor == GameFlavor::Poe2 {
+            if let Some(source) = self.poe2.as_mut() {
+                source.drop_run(now_unix_ms());
+            }
+            return;
+        }
         for action in self.engine.force_end(flavor.clone(), now_unix_ms()) {
             if let ActivityAction::Complete { id, .. }
             | ActivityAction::Abandon { id, .. }
@@ -878,6 +947,10 @@ impl Coordinator {
         let flavor = active.draft.flavor.clone();
         let occurred_at_ms = now_unix_ms();
         self.pending_test_end = None;
+        if flavor == GameFlavor::Poe2 {
+            self.force_end_poe2(occurred_at_ms);
+            return;
+        }
         for action in self.engine.force_end(flavor, occurred_at_ms) {
             self.apply(action);
         }
@@ -892,10 +965,10 @@ impl Coordinator {
             return;
         }
         let flavor = active.draft.flavor.clone();
-        let limit = if flavor == GameFlavor::Retail {
-            RETAIL_DATA_TIMEOUT_MS
-        } else {
-            CLASSIC_DATA_TIMEOUT_MS
+        let limit = match flavor {
+            GameFlavor::Retail => RETAIL_DATA_TIMEOUT_MS,
+            GameFlavor::Poe2 => POE2_DATA_TIMEOUT_MS,
+            _ => CLASSIC_DATA_TIMEOUT_MS,
         };
         let Some((seen_wall_ms, seen_log_ms)) = self.last_event.get(&flavor).copied() else {
             return;
@@ -909,8 +982,25 @@ impl Coordinator {
             seen_log_ms,
             "data timeout: force-ending automatic recording (log idle on disk)"
         );
+        if flavor == GameFlavor::Poe2 {
+            self.force_end_poe2(seen_log_ms);
+            return;
+        }
         for action in self.engine.force_end(flavor, seen_log_ms) {
             self.apply(action);
+        }
+    }
+
+    /// End the map run at `at_ms`; a run already out of the map ends when
+    /// the player left it.
+    fn force_end_poe2(&mut self, at_ms: i64) {
+        let actions = self
+            .poe2
+            .as_mut()
+            .map(|source| source.force_end(at_ms))
+            .unwrap_or_default();
+        for action in actions {
+            self.apply_poe2(action);
         }
     }
 
@@ -1465,6 +1555,7 @@ impl Coordinator {
         }
 
         let logs_changed = draft.flavors != self.config.flavors
+            || draft.activities.map_grace_seconds != self.config.activities.map_grace_seconds
             || draft.validate_log_paths != self.config.validate_log_paths;
         let storage_changed = draft.storage.recording_dir != self.config.storage.recording_dir
             || draft.storage.separate_buffer_dir != self.config.storage.separate_buffer_dir

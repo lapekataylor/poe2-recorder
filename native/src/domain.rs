@@ -50,12 +50,16 @@ pub enum GameFlavor {
     /// Classic Era log source. Only used to tag parsed events and key per-flavour
     /// engine state; Era recordings store `Classic` in their metadata.
     Era,
+    /// Path of Exile 2, from its `Client.txt`.
+    Poe2,
     Unknown(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
+    /// A Path of Exile 2 waystone map, from entry until the player leaves.
+    MapRuns,
     TwoVTwo,
     ThreeVThree,
     FiveVFive,
@@ -185,6 +189,17 @@ pub enum ActivityDetails {
         rounds_played: Option<u8>,
         rounds: Vec<RoundSummary>,
     },
+    MapRun {
+        /// The game's area id, e.g. `MapHiddenGrotto`.
+        area_id: String,
+        map_name: String,
+        area_level: u32,
+        seed: u64,
+        deaths: u32,
+        portal_trips: u32,
+        /// Time spent outside the map mid-run, e.g. selling loot.
+        away_ms: u64,
+    },
     Clip {
         source_recording: RecordingId,
         source_category: Category,
@@ -197,7 +212,8 @@ impl ActivityDetails {
     pub fn matches_category(&self, category: &Category) -> bool {
         matches!(
             (category, self),
-            (Category::Raids, Self::Raid { .. })
+            (Category::MapRuns, Self::MapRun { .. })
+                | (Category::Raids, Self::Raid { .. })
                 | (Category::MythicPlus, Self::Dungeon { .. })
                 | (
                     Category::TwoVTwo

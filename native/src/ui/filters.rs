@@ -123,7 +123,7 @@ pub fn suggestions_for_entry(entry: &LibraryEntry) -> Vec<Chip> {
         GameFlavor::Retail => chips.push(Chip::new(GROUP_FLAVOUR, "Retail")),
         // Era recordings persist as Classic.
         GameFlavor::Classic | GameFlavor::Era => chips.push(Chip::new(GROUP_FLAVOUR, "Classic")),
-        GameFlavor::Unknown(_) => {}
+        GameFlavor::Poe2 | GameFlavor::Unknown(_) => {}
     }
     if let Some(player) = &entry.player {
         if !player.name.is_empty() {

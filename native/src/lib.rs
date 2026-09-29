@@ -12,6 +12,7 @@ pub mod logwatch;
 pub mod media_jobs;
 pub mod meter;
 pub mod parser;
+pub mod poe2;
 pub mod process;
 pub mod recorder;
 pub mod spelldb;

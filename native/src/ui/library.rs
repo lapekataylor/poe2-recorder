@@ -47,6 +47,7 @@ pub struct Selection {
 /// the column set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Family {
+    MapRun,
     Raid,
     Dungeon,
     Pvp,
@@ -56,6 +57,7 @@ enum Family {
 
 fn family_of(category: &Category) -> Family {
     match category {
+        Category::MapRuns => Family::MapRun,
         Category::Raids => Family::Raid,
         Category::MythicPlus => Family::Dungeon,
         Category::TwoVTwo
@@ -320,6 +322,20 @@ fn category_fields(entry: &LibraryEntry, family: Family) -> CategoryFields {
     let mut source = String::new();
 
     match (&entry.details, family) {
+        (
+            ActivityDetails::MapRun {
+                map_name,
+                area_level,
+                deaths,
+                ..
+            },
+            Family::MapRun,
+        ) => {
+            place = map_name.clone();
+            level = i64::from(*area_level);
+            // The deaths column reuses the pull slot: a number sorted as one.
+            pull = deaths.to_string();
+        }
         (
             ActivityDetails::Raid {
                 zone_name,
@@ -1234,6 +1250,28 @@ impl Inner {
     fn columns_for(self: &Rc<Self>, family: Family) -> Vec<gtk4::ColumnViewColumn> {
         let mut columns = vec![self.star_column(), self.details_column()];
         match family {
+            Family::MapRun => {
+                columns.push(text_column(
+                    "Map",
+                    true,
+                    |r| r.place.clone(),
+                    sort_by(|r| r.place.clone()),
+                ));
+                columns.push(text_column(
+                    "Level",
+                    false,
+                    |r| r.level.to_string(),
+                    sort_by(|r| r.level),
+                ));
+                columns.push(text_column(
+                    "Deaths",
+                    false,
+                    |r| r.pull.clone(),
+                    sort_by(|r| r.pull.parse::<i64>().unwrap_or(0)),
+                ));
+                columns.push(self.duration_column());
+                columns.push(self.date_column());
+            }
             Family::Raid => {
                 columns.push(text_column(
                     "Encounter",

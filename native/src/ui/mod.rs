@@ -265,7 +265,8 @@ pub fn run_remote(application: adw::Application) -> i32 {
 }
 
 /// Category rail metadata in rail order: label and symbolic icon.
-pub const CATEGORIES: [(Category, &str, &str); 10] = [
+pub const CATEGORIES: [(Category, &str, &str); 11] = [
+    (Category::MapRuns, "Map runs", "mark-location-symbolic"),
     (Category::TwoVTwo, "2v2", "wr-category-2v2-symbolic"),
     (Category::ThreeVThree, "3v3", "wr-category-3v3-symbolic"),
     (Category::FiveVFive, "5v5", "wr-category-5v5-symbolic"),

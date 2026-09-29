@@ -1404,6 +1404,16 @@ impl LegacySidecar {
                 team_mmr: self.team_mmr,
             },
             Category::Manual => ActivityDetails::Manual,
+            // Legacy Warcraft Recorder files never hold a map run.
+            Category::MapRuns => ActivityDetails::MapRun {
+                area_id: String::new(),
+                map_name: self.legacy_place_name().unwrap_or_default(),
+                area_level: 0,
+                seed: 0,
+                deaths: 0,
+                portal_trips: 0,
+                away_ms: 0,
+            },
         }
     }
 }

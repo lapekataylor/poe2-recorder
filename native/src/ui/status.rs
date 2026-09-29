@@ -56,6 +56,9 @@ pub struct StatusView {
 /// Enabled flavour labels in config order, for the Ready detail line.
 pub fn enabled_flavors(config: &Config) -> Vec<&'static str> {
     let mut flavors = Vec::new();
+    if config.flavors.poe2.enabled {
+        flavors.push("Path of Exile 2");
+    }
     if config.flavors.retail.enabled {
         flavors.push("Retail");
     }
@@ -113,7 +116,7 @@ pub fn view(snapshot: &AppSnapshot) -> StatusView {
         },
         RecorderStatus::WaitingForWow => StatusView {
             title: "Waiting".to_owned(),
-            detail: "Waiting for World of Warcraft to start.".to_owned(),
+            detail: "Waiting for screen capture to start.".to_owned(),
             tone: Tone::Waiting,
             elapsed_anchor_ms: None,
             show_force_end: false,
@@ -122,7 +125,7 @@ pub fn view(snapshot: &AppSnapshot) -> StatusView {
         RecorderStatus::Ready => StatusView {
             title: "Ready".to_owned(),
             detail: format!(
-                "Watching combat logs: {}.",
+                "Watching game logs: {}.",
                 enabled_flavors(&snapshot.config).join(", ")
             ),
             tone: Tone::Ready,

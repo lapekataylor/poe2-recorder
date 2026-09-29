@@ -253,7 +253,17 @@ pub static ACTIVITY_COMBOS: [ComboSpec; 1] = [ComboSpec {
     },
 }];
 
-pub static ACTIVITY_SPINS: [SpinSpec; 4] = [
+pub static ACTIVITY_SPINS: [SpinSpec; 5] = [
+    SpinSpec {
+        field: "activities.map_grace_seconds",
+        title: "Map grace period",
+        subtitle: "Seconds a map run waits for you to return from the hideout (0–1800)",
+        min: 0.0,
+        max: 1_800.0,
+        step: 30.0,
+        get: |config| f64::from(config.activities.map_grace_seconds),
+        set: |config, value| config.activities.map_grace_seconds = value as u32,
+    },
     SpinSpec {
         field: "activities.min_raid_duration_seconds",
         title: "Minimum raid duration",
@@ -384,7 +394,18 @@ pub static INTERFACE_SWITCHES: [SwitchSpec; 5] = [
     },
 ];
 
-pub static PATHS: [PathSpec; 7] = [
+pub static PATHS: [PathSpec; 8] = [
+    PathSpec {
+        field: "flavors.poe2",
+        title: "Path of Exile 2 logs",
+        needs_write: false,
+        get: |config| &config.flavors.poe2.log_dir,
+        set: |config, path| config.flavors.poe2.log_dir = path,
+        enabled: Some(EnabledAccess {
+            get: |config| config.flavors.poe2.enabled,
+            set: |config, value| config.flavors.poe2.enabled = value,
+        }),
+    },
     PathSpec {
         field: "flavors.retail",
         title: "Retail",
@@ -462,6 +483,7 @@ pub static PATHS: [PathSpec; 7] = [
 /// erasing their values.
 pub fn row_sensitive(field: &str, config: &Config) -> bool {
     match field {
+        "activities.map_grace_seconds" => config.flavors.poe2.enabled,
         "activities.min_raid_difficulty"
         | "activities.min_raid_duration_seconds"
         | "activities.current_raid_only"

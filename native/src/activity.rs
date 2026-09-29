@@ -193,7 +193,8 @@ impl ActivityEngine {
                 &mut self.finished,
                 &mut actions,
             ),
-            GameFlavor::Unknown(_) => {}
+            // Path of Exile 2 runs come from `poe2::Poe2Source`, not here.
+            GameFlavor::Poe2 | GameFlavor::Unknown(_) => {}
         }
         actions
     }
@@ -205,7 +206,7 @@ impl ActivityEngine {
             GameFlavor::Retail => &mut self.retail,
             GameFlavor::Classic => &mut self.classic,
             GameFlavor::Era => &mut self.era,
-            GameFlavor::Unknown(_) => return Vec::new(),
+            GameFlavor::Poe2 | GameFlavor::Unknown(_) => return Vec::new(),
         };
         let Some(active) = state.active.take() else {
             return Vec::new();
@@ -2387,6 +2388,7 @@ fn activity_hash(active: &ActiveActivity, outcome: Outcome) -> String {
 
 fn category_hash_name(category: &Category) -> &'static str {
     match category {
+        Category::MapRuns => "Map runs",
         Category::TwoVTwo => "2v2",
         Category::ThreeVThree => "3v3",
         Category::FiveVFive => "5v5",

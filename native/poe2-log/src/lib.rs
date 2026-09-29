@@ -210,6 +210,12 @@ mod tests {
         assert_eq!(area_kind("HideoutFelled"), AreaKind::Hideout);
         assert_eq!(area_kind("G1_town"), AreaKind::Town);
         assert_eq!(area_kind("G1_1"), AreaKind::Other);
+        // Seen in a real Client.txt.
+        assert_eq!(area_kind("HideoutShoreline"), AreaKind::Hideout);
+        assert_eq!(area_kind("P2_Town"), AreaKind::Town);
+        assert_eq!(area_kind("G_Endgame_Town"), AreaKind::Town);
+        assert_eq!(area_kind("MapUberBoss_FallenStar"), AreaKind::Map);
+        assert_eq!(area_kind("Abyss_Depths1"), AreaKind::Other);
     }
 
     #[test]

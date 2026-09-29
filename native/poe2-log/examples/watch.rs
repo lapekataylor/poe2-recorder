@@ -8,7 +8,7 @@
 //! cargo run --manifest-path native/poe2-log/Cargo.toml --example watch -- <Client.txt> [options]
 //!
 //!   --from-start       read the existing lines too (default: only new ones)
-//!   --grace <seconds>  grace period after leaving a map (default 60)
+//!   --grace <seconds>  grace period after leaving a map (default 300)
 //!   --verbose          also print every line that did not parse
 //! ```
 
@@ -71,9 +71,13 @@ fn main() -> ExitCode {
             }
         }
         // Handle each complete line; keep a partly written one for later.
-        while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
-            let line = String::from_utf8_lossy(&pending[..end]).into_owned();
-            pending.drain(..=end);
+        // Drained once at the end so a large backlog is not shifted per line.
+        let complete = pending
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |end| end + 1);
+        for raw in pending[..complete].split(|byte| *byte == b'\n') {
+            let line = String::from_utf8_lossy(raw);
             match parse_line(&line, utc_offset_minutes) {
                 Some(parsed) => {
                     print_event(&parsed.event);
@@ -87,6 +91,7 @@ fn main() -> ExitCode {
                 None => {}
             }
         }
+        pending.drain(..complete);
         for action in tracker.tick(now_ms()) {
             print_action(&action);
         }

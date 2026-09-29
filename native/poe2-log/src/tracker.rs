@@ -3,7 +3,9 @@
 //! Map-run state: when a recording should begin and end.
 //!
 //! - Entering a waystone map while idle begins a run.
-//! - Leaving the map (hideout, town, anywhere else) starts a grace period.
+//! - Areas entered from inside the map that are not a hideout, town or map
+//!   (Abyss depths and the like) are part of the run.
+//! - Leaving the map for a hideout or town starts a grace period.
 //!   Coming back to the same seed within it continues the run and records the
 //!   time away, so portalling out to sell loot does not split the video.
 //! - The run completes when the grace period runs out, or at once when a map
@@ -17,8 +19,9 @@
 
 use crate::{AreaKind, LogEvent, ParsedLine};
 
-/// Used when the settings do not say otherwise.
-pub const DEFAULT_GRACE_MS: i64 = 60_000;
+/// Used when the settings do not say otherwise. Five minutes covers most
+/// real trips to the hideout mid-map; a new map still ends a run at once.
+pub const DEFAULT_GRACE_MS: i64 = 300_000;
 
 /// A run that has begun: enough to title and start a recording.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,6 +151,14 @@ impl MapTracker {
                     })
                 }
             },
+            // Only reachable from inside the map, e.g. `Abyss_Depths1`.
+            (
+                State::InMap(run),
+                LogEvent::AreaEntered {
+                    kind: AreaKind::Other,
+                    ..
+                },
+            ) => State::InMap(run),
             (State::InMap(run), LogEvent::AreaEntered { .. }) => State::Away {
                 run,
                 left_at_ms: at_ms,
@@ -315,6 +326,49 @@ mod tests {
         let actions = tracker.handle(&map(90, 8));
         assert_eq!(completed(&actions)[0].ended_at_ms, 90_000);
         assert!(matches!(&actions[1], MapAction::Begin(start) if start.seed == 8));
+    }
+
+    fn area(seconds: i64, area_id: &str, kind: AreaKind) -> ParsedLine {
+        at(
+            seconds,
+            LogEvent::AreaEntered {
+                area_id: area_id.to_owned(),
+                area_level: 80,
+                seed: 99,
+                kind,
+            },
+        )
+    }
+
+    #[test]
+    fn sub_areas_inside_a_map_are_part_of_the_run() {
+        let mut tracker = MapTracker::new(GRACE);
+        tracker.handle(&map(0, 7));
+        tracker.handle(&area(100, "Abyss_Depths1", AreaKind::Other));
+        let death = at(
+            150,
+            LogEvent::Slain {
+                name: "TestExile".to_owned(),
+            },
+        );
+        tracker.handle(&death);
+        // Long past the grace period, but the player never left the map.
+        assert!(tracker.tick(1_000_000).is_empty());
+        tracker.handle(&map(1_000, 7));
+        let actions = tracker.force_end(1_100_000);
+        let run = completed(&actions)[0];
+        assert_eq!(run.deaths.len(), 1);
+        assert!(run.away.is_empty());
+    }
+
+    #[test]
+    fn campaign_areas_while_away_do_not_resume_the_run() {
+        let mut tracker = MapTracker::new(GRACE);
+        tracker.handle(&map(0, 7));
+        tracker.handle(&hideout(100));
+        tracker.handle(&area(110, "G1_1", AreaKind::Other));
+        let actions = tracker.tick(100_000 + GRACE);
+        assert_eq!(completed(&actions)[0].ended_at_ms, 100_000);
     }
 
     #[test]

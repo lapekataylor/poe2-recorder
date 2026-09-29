@@ -20,13 +20,11 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use warcraft_recorder::config::{AuthorizedPath, Config, ValidationProblem};
-use warcraft_recorder::coordinator::{AppSnapshot, Command};
-use warcraft_recorder::domain::{
-    Codec, RaidDifficulty, RecorderStatus, ReplayStorage, StorageLimit,
-};
-use warcraft_recorder::recorder::{AudioDevice, Recorder};
-use warcraft_recorder::storage::now_unix_ms;
+use poe_recorder::config::{AuthorizedPath, Config, ValidationProblem};
+use poe_recorder::coordinator::{AppSnapshot, Command};
+use poe_recorder::domain::{Codec, RaidDifficulty, RecorderStatus, ReplayStorage, StorageLimit};
+use poe_recorder::recorder::{AudioDevice, Recorder};
+use poe_recorder::storage::now_unix_ms;
 
 use super::operational_actions::present_reselect_dialog;
 use super::{ActionSink, ShellAction};
@@ -539,7 +537,7 @@ pub fn apply_outcome(draft: &Config, unsafe_reason: Option<&'static str>) -> App
 pub fn probe_folder(path: &Path, needs_write: bool) -> Result<(), String> {
     std::fs::read_dir(path).map_err(|error| format!("The folder cannot be read: {error}"))?;
     if needs_write {
-        let probe = path.join(format!(".warcraft-recorder-probe-{}", uuid::Uuid::new_v4()));
+        let probe = path.join(format!(".poe-recorder-probe-{}", uuid::Uuid::new_v4()));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -855,7 +853,7 @@ impl Settings {
             interface_group.add(&switch_row(spec, &draft, &registry, &refresh));
         }
         let tray_note = gtk4::Label::new(Some(
-            "No system tray was found, so closing the window quits Warcraft Recorder.",
+            "No system tray was found, so closing the window quits PoE Recorder.",
         ));
         tray_note.set_wrap(true);
         tray_note.set_xalign(0.0);
@@ -1199,7 +1197,7 @@ impl Settings {
             let result = gtk4::gio::spawn_blocking(|| Recorder::new().audio_devices())
                 .await
                 .unwrap_or_else(|_| {
-                    Err(warcraft_recorder::recorder::RecorderError::SpawnFailed {
+                    Err(poe_recorder::recorder::RecorderError::SpawnFailed {
                         message: "audio discovery crashed".to_owned(),
                         log_tail: String::new(),
                     })
@@ -1216,7 +1214,7 @@ impl Settings {
                     group.set_description(Some(&format!(
                         "Audio devices could not be listed ({error:?}). The saved selection is kept."
                     )));
-                    warcraft_recorder::recorder::AudioDevices::default()
+                    poe_recorder::recorder::AudioDevices::default()
                 }
             };
             let (selected_output, selected_input) = {
@@ -1472,8 +1470,8 @@ fn path_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warcraft_recorder::config::{FlavorConfig, PathAuthorization};
-    use warcraft_recorder::domain::{Category, WorkKind, WorkProgress};
+    use poe_recorder::config::{FlavorConfig, PathAuthorization};
+    use poe_recorder::domain::{Category, WorkKind, WorkProgress};
 
     fn ready_config() -> Config {
         let mut config = Config::default();
@@ -1679,11 +1677,11 @@ mod tests {
     #[test]
     fn probe_matches_field_requirements() {
         let directory = std::env::temp_dir().join(format!(
-            "warcraft-recorder-settings-probe-{}",
+            "poe-recorder-settings-probe-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&directory).expect("create probe directory");
-        let sentinel = directory.join(".warcraft-recorder-probe");
+        let sentinel = directory.join(".poe-recorder-probe");
         std::fs::write(&sentinel, b"sentinel").expect("write sentinel file");
         assert_eq!(probe_folder(&directory, false), Ok(()));
         assert_eq!(probe_folder(&directory, true), Ok(()));

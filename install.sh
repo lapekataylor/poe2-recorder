@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installer for the Warcraft Recorder Flatpak. Safe to pipe into bash: it adds
+# Installer for the PoE Recorder Flatpak. Safe to pipe into bash: it adds
 # the project remote, installs the app, and starts it. Re-running it updates an
 # existing install.
 
-REMOTE_NAME="warcraft-recorder"
-REMOTE_DESCRIPTOR="${WARCRAFTRECORDER_REMOTE_DESCRIPTOR:-https://johanwes.github.io/wow-recorder-linuxwayland/index.flatpakrepo}"
-FLATHUB_DESCRIPTOR="${WARCRAFTRECORDER_FLATHUB_DESCRIPTOR:-https://dl.flathub.org/repo/flathub.flatpakrepo}"
-INSTALL_PAGE="${WARCRAFTRECORDER_INSTALL_PAGE:-https://github.com/JohanWes/wow-recorder-linuxwayland#install}"
-APP_ID="io.github.JohanWes.WarcraftRecorder"
+REMOTE_NAME="poe-recorder"
+REMOTE_DESCRIPTOR="${POERECORDER_REMOTE_DESCRIPTOR:-https://lapekataylor.github.io/poe2-recorder/index.flatpakrepo}"
+FLATHUB_DESCRIPTOR="${POERECORDER_FLATHUB_DESCRIPTOR:-https://dl.flathub.org/repo/flathub.flatpakrepo}"
+INSTALL_PAGE="${POERECORDER_INSTALL_PAGE:-https://github.com/lapekataylor/poe2-recorder#install}"
+APP_ID="io.github.lapekataylor.PoeRecorder"
 # Always address the published branch: a leftover development install of the
 # same application ID would otherwise make a bare `flatpak run` ambiguous.
 APP_REF="${APP_ID}//stable"
@@ -90,7 +90,7 @@ check_session() {
   # this is not running from the desktop the app will launch into, so the
   # checks below have nothing trustworthy to look at either.
   if [[ "${XDG_SESSION_TYPE:-}" == x11 ]]; then
-    warn "this looks like an X11 session; Warcraft Recorder needs a Wayland session"
+    warn "this looks like an X11 session; PoE Recorder needs a Wayland session"
     return 0
   fi
   [[ -n "${WAYLAND_DISPLAY:-}" ]] || return 0
@@ -106,7 +106,7 @@ check_session() {
 
 require_flatpak
 
-log "Installing Warcraft Recorder..."
+log "Installing PoE Recorder..."
 
 ensure_runtime_source
 
@@ -120,7 +120,7 @@ fi
 if flatpak info --user "$APP_REF" >/dev/null 2>&1; then
   origin=$(flatpak info --user --show-origin "$APP_REF" 2>/dev/null || true)
   if [[ "$origin" == "$REMOTE_NAME" ]]; then
-    log "Warcraft Recorder is already installed; updating it."
+    log "PoE Recorder is already installed; updating it."
     if ! flatpak update --user --assumeyes "$APP_REF"; then
       fail_with_manual_instructions
     fi
@@ -139,11 +139,11 @@ fi
 check_session
 
 # Start the app here.
-log "Launching Warcraft Recorder..."
+log "Launching PoE Recorder..."
 if command -v setsid >/dev/null 2>&1; then
   setsid flatpak run "$APP_REF" >/dev/null 2>&1 </dev/null &
 else
   flatpak run "$APP_REF" >/dev/null 2>&1 </dev/null &
 fi
 
-log "Done. Warcraft Recorder is installed and updates through Flatpak."
+log "Done. PoE Recorder is installed and updates through Flatpak."

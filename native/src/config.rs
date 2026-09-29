@@ -22,7 +22,7 @@ use crate::domain::{
 };
 
 pub const CONFIG_VERSION: u32 = 1;
-pub const APP_ID: &str = "io.github.JohanWes.WarcraftRecorder";
+pub const APP_ID: &str = "io.github.lapekataylor.PoeRecorder";
 pub const CONFIG_FILENAME: &str = "config.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -777,8 +777,7 @@ mod tests {
     use super::*;
 
     fn temporary_directory(name: &str) -> PathBuf {
-        let path =
-            env::temp_dir().join(format!("warcraft-recorder-{name}-{}", uuid::Uuid::new_v4()));
+        let path = env::temp_dir().join(format!("poe-recorder-{name}-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&path).expect("create test directory");
         path
     }

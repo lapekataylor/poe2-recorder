@@ -6,7 +6,7 @@
 //! Multi-POV grid playback (synchronized 2–4 player grid, drift correction)
 //! was removed from the product by maintainer decision (2026-07-22).
 
-use warcraft_recorder::domain::{LibraryEntry, RecordingId};
+use poe_recorder::domain::{LibraryEntry, RecordingId};
 
 use super::filters::spec_name;
 
@@ -61,7 +61,7 @@ pub fn choose<'a>(povs: &'a [Pov], preferred_player: Option<&str>) -> Option<&'a
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warcraft_recorder::domain::{Category, PlayerSummary};
+    use poe_recorder::domain::{Category, PlayerSummary};
 
     fn entry(player: Option<(&str, u16)>, title: &str) -> LibraryEntry {
         let mut entry = crate::ui::window::tests::entry(Category::Raids, title, 0);

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>io.github.lapekataylor.PoeRecorder.Devel</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>PoE Recorder (Development)</name>
+  <summary>Automatically record and review Path of Exile map runs</summary>
+  <description>
+    <p>
+      PoE Recorder records each Path of Exile 2 map run from the game's
+      Client.txt log and keeps a local library of videos with the map, area
+      level, deaths and trips out of the map.
+    </p>
+    <p>This development build is for testing unreleased changes.</p>
+  </description>
+  <launchable type="desktop-id">io.github.lapekataylor.PoeRecorder.Devel.desktop</launchable>
+  <url type="homepage">https://github.com/lapekataylor/poe2-recorder</url>
+  <url type="bugtracker">https://github.com/lapekataylor/poe2-recorder/issues</url>
+  <developer id="io.github.lapekataylor">
+    <name>PoE Recorder contributors</name>
+  </developer>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-07-27">
+      <description>
+        <p>Initial native development package.</p>
+      </description>
+    </release>
+  </releases>
+</component>

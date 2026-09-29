@@ -7,9 +7,9 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::StandardItem;
 
 #[cfg(not(feature = "development"))]
-const ICON_NAME: &str = "io.github.JohanWes.WarcraftRecorder";
+const ICON_NAME: &str = "io.github.lapekataylor.PoeRecorder";
 #[cfg(feature = "development")]
-const ICON_NAME: &str = "io.github.JohanWes.WarcraftRecorder.Devel";
+const ICON_NAME: &str = "io.github.lapekataylor.PoeRecorder.Devel";
 
 /// The only event carried over the bounded channel is Open; it is idempotent
 /// (present the window) so dropping it under saturation is harmless. Quit is a
@@ -48,7 +48,7 @@ impl TrayBackend {
             available: Arc::clone(&available),
             quit_requested: Arc::clone(&quit_requested),
             wake,
-            title: "Warcraft Recorder".into(),
+            title: "PoE Recorder".into(),
             status: ksni::Status::Active,
         };
 
@@ -106,7 +106,7 @@ impl RecorderTray {
 
 impl ksni::Tray for RecorderTray {
     fn id(&self) -> String {
-        "warcraft-recorder".into()
+        "poe-recorder".into()
     }
 
     fn title(&self) -> String {
@@ -170,7 +170,7 @@ mod tests {
             available: Arc::new(AtomicBool::new(true)),
             quit_requested: Arc::clone(&quit),
             wake: Arc::new(|| {}),
-            title: "Warcraft Recorder".into(),
+            title: "PoE Recorder".into(),
             status: ksni::Status::Active,
         };
 

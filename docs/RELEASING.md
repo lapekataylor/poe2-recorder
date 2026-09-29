@@ -1,13 +1,13 @@
 # Releasing
 
 Flatpak is the only native release format. The stable application ID is
-`io.github.JohanWes.WarcraftRecorder`; the permanent signed remote is
-`https://johanwes.github.io/wow-recorder-linuxwayland/`.
+`io.github.lapekataylor.PoeRecorder`; the permanent signed remote is
+`https://lapekataylor.github.io/poe2-recorder/`.
 
 ## Candidate build
 
 1. Update `native/Cargo.toml` and the first `<release version="...">` in
-   `data/io.github.JohanWes.WarcraftRecorder.metainfo.xml` to the same version.
+   `data/io.github.lapekataylor.PoeRecorder.metainfo.xml` to the same version.
 2. Run `bash scripts/generate-release-notes.sh <version>` as the last thing
    before the release commit. It prepends the commit subjects since the
    previous tag to `data/release-notes.md`, which is compiled into the binary
@@ -46,11 +46,11 @@ together. Verify with only the public key:
 
 ```sh
 gpg --import public-release-key.asc
-flatpak remote-add --user --if-not-exists warcraft-recorder \
-  https://johanwes.github.io/wow-recorder-linuxwayland/index.flatpakrepo
-flatpak install --user warcraft-recorder io.github.JohanWes.WarcraftRecorder
-flatpak remote-info --user --show-commit warcraft-recorder \
-  io.github.JohanWes.WarcraftRecorder
+flatpak remote-add --user --if-not-exists poe-recorder \
+  https://lapekataylor.github.io/poe2-recorder/index.flatpakrepo
+flatpak install --user poe-recorder io.github.lapekataylor.PoeRecorder
+flatpak remote-info --user --show-commit poe-recorder \
+  io.github.lapekataylor.PoeRecorder
 ```
 
 If the signing key is lost, users must remove and re-add the remote with a new
@@ -62,23 +62,23 @@ For a stable install, add the permanent remote and install the application as
 shown above. Update with `flatpak update --user`. For candidate testing use:
 
 ```sh
-flatpak install --user ./warcraft-recorder.flatpak
+flatpak install --user ./poe-recorder.flatpak
 ```
 
 To roll back to the previous signed deployment, inspect the remote log and
 deploy its previous commit:
 
 ```sh
-flatpak remote-info --user --log warcraft-recorder \
-  io.github.JohanWes.WarcraftRecorder
+flatpak remote-info --user --log poe-recorder \
+  io.github.lapekataylor.PoeRecorder
 flatpak update --user --commit=<previous-commit> \
-  io.github.JohanWes.WarcraftRecorder
+  io.github.lapekataylor.PoeRecorder
 ```
 
 Uninstalling the app does not delete recordings:
 
 ```sh
-flatpak uninstall --user io.github.JohanWes.WarcraftRecorder
+flatpak uninstall --user io.github.lapekataylor.PoeRecorder
 ```
 
 Use `--delete-data` only when deleting the native app's private data is

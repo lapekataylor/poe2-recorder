@@ -14,9 +14,9 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use warcraft_recorder::coordinator::{AppSnapshot, Command};
-use warcraft_recorder::domain::{Category, RecorderStatus};
-use warcraft_recorder::storage::now_unix_ms;
+use poe_recorder::coordinator::{AppSnapshot, Command};
+use poe_recorder::domain::{Category, RecorderStatus};
+use poe_recorder::storage::now_unix_ms;
 
 use super::status::elapsed_label;
 use super::{ActionSink, ShellAction, TEST_CATEGORIES};
@@ -227,7 +227,7 @@ pub fn present_test_dialog(parent: &gtk4::Widget, sink: ActionSink, ready: bool)
 /// The published install script: adds the signed Flatpak remote and installs
 /// or updates the app.
 const UPDATE_SCRIPT_URL: &str =
-    "https://raw.githubusercontent.com/JohanWes/wow-recorder-linuxwayland/main/install.sh";
+    "https://raw.githubusercontent.com/lapekataylor/poe2-recorder/main/install.sh";
 
 fn flatpak_available() -> bool {
     std::env::var_os("PATH").is_some_and(|paths| {
@@ -250,7 +250,7 @@ pub fn present_update_dialog(parent: &gtk4::Widget) {
         info_dialog(
             parent,
             "Updates are automatic",
-            "New versions of Warcraft Recorder arrive with your usual system app updates.",
+            "New versions of PoE Recorder arrive with your usual system app updates.",
         );
         return;
     }
@@ -258,13 +258,13 @@ pub fn present_update_dialog(parent: &gtk4::Widget) {
         info_dialog(
             parent,
             "Flatpak is needed to update",
-            "Warcraft Recorder is distributed as a Flatpak. Install Flatpak from your \
+            "PoE Recorder is distributed as a Flatpak. Install Flatpak from your \
              distribution, then check for updates again.",
         );
         return;
     }
     let dialog = adw::AlertDialog::new(
-        Some("Update Warcraft Recorder?"),
+        Some("Update PoE Recorder?"),
         Some("This installs the latest version. It can take a few minutes."),
     );
     dialog.add_responses(&[("cancel", "Cancel"), ("update", "Update")]);
@@ -316,7 +316,7 @@ fn run_update(parent: &gtk4::Widget) {
                     &parent,
                     "The update did not finish",
                     &format!(
-                        "Warcraft Recorder was not updated.\n\n{}",
+                        "PoE Recorder was not updated.\n\n{}",
                         if tail.is_empty() {
                             "No reason was reported.".to_owned()
                         } else {
@@ -328,7 +328,7 @@ fn run_update(parent: &gtk4::Widget) {
             Err(error) => info_dialog(
                 &parent,
                 "The update could not start",
-                &format!("Warcraft Recorder could not run the update: {error}"),
+                &format!("PoE Recorder could not run the update: {error}"),
             ),
         }
     });
@@ -415,7 +415,7 @@ pub fn present_release_notes(parent: &gtk4::Widget, sink: ActionSink, notes: &[&
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(
         "What's new",
-        &format!("Version {}", warcraft_recorder::VERSION),
+        &format!("Version {}", poe_recorder::VERSION),
     )));
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(true);
@@ -452,7 +452,7 @@ pub fn present_release_notes(parent: &gtk4::Widget, sink: ActionSink, notes: &[&
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warcraft_recorder::config::Config;
+    use poe_recorder::config::Config;
 
     fn snapshot(status: RecorderStatus, selected: Category, manual: bool) -> AppSnapshot {
         let mut config = Config::default();

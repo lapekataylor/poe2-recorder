@@ -17,18 +17,18 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
-use warcraft_recorder::config::{
+use poe_recorder::config::{
     ActivitySettings, AuthorizedPath, CaptureSettings, Config, FlavorConfig, LayoutSettings,
     ManualSettings, StorageSettings,
 };
-use warcraft_recorder::coordinator::{AppSnapshot, ClipRange, Command, Coordinator, Setup, start};
-use warcraft_recorder::domain::{
+use poe_recorder::coordinator::{AppSnapshot, ClipRange, Command, Coordinator, Setup, start};
+use poe_recorder::domain::{
     Category, MeterFight, MeterMetric, Outcome, RecorderStatus, StorageLimit, TimelineKind,
 };
-use warcraft_recorder::media_jobs::MediaConfig;
-use warcraft_recorder::meter::{MeterProjection, project_current, project_overall};
-use warcraft_recorder::recorder::Timeouts;
-use warcraft_recorder::storage::{RECOVERY_DIR, load_meter, now_unix_ms};
+use poe_recorder::media_jobs::MediaConfig;
+use poe_recorder::meter::{MeterProjection, project_current, project_overall};
+use poe_recorder::recorder::Timeouts;
+use poe_recorder::storage::{RECOVERY_DIR, load_meter, now_unix_ms};
 
 const PLAYER_GUID: &str = "Player-1092-0A70E103";
 const PLAYER_NAME: &str = "Testplayer-Testrealm";
@@ -164,7 +164,7 @@ impl Harness {
         .unwrap();
     }
 
-    fn entries_of(&self, category: &Category) -> Vec<&warcraft_recorder::domain::LibraryEntry> {
+    fn entries_of(&self, category: &Category) -> Vec<&poe_recorder::domain::LibraryEntry> {
         self.latest
             .entries
             .iter()
@@ -228,7 +228,7 @@ fn fixture_bin(name: &str) -> PathBuf {
 
 fn write_config(root: &Path, library: &Path, capture_root: &Path, log_dir: &Path) {
     let config = Config {
-        flavors: warcraft_recorder::config::FlavorSettings {
+        flavors: poe_recorder::config::FlavorSettings {
             retail: FlavorConfig {
                 enabled: true,
                 log_dir: AuthorizedPath::authorized(log_dir),
@@ -718,11 +718,11 @@ fn dismissing_the_release_notes_ends_them_for_good() {
     assert!(harness.latest.config.last_seen_version.is_empty());
 
     harness.send(Command::DismissReleaseNotes);
-    harness.pump(|snapshot| snapshot.config.last_seen_version == warcraft_recorder::VERSION);
+    harness.pump(|snapshot| snapshot.config.last_seen_version == poe_recorder::VERSION);
     let saved = Config::load(&config_path).expect("reload the saved config");
     assert_eq!(
         saved.last_seen_version,
-        warcraft_recorder::VERSION,
+        poe_recorder::VERSION,
         "the dismissal must outlive the process"
     );
 
@@ -738,13 +738,13 @@ fn dismissing_the_release_notes_ends_them_for_good() {
     harness.pump(|snapshot| snapshot.config.capture.fps == 30);
     assert_eq!(
         harness.latest.config.last_seen_version,
-        warcraft_recorder::VERSION,
+        poe_recorder::VERSION,
         "a settings save must not resurrect the dismissal"
     );
     let saved = Config::load(&config_path).expect("reload after the settings save");
     assert_eq!(
         saved.last_seen_version,
-        warcraft_recorder::VERSION,
+        poe_recorder::VERSION,
         "the resurrected notes must not reach disk either"
     );
 }
@@ -839,10 +839,7 @@ fn missing_regular_artifact_replaces_the_child_and_recovers() {
 /// (`canary-old`), optionally protected. Its media is removed right after
 /// startup, so any full library rescan would drop it: the canary stays in the
 /// index only while completion, mutation, and eviction update incrementally.
-fn canary_harness(
-    name: &str,
-    protected: bool,
-) -> (Harness, warcraft_recorder::domain::LibraryEntry) {
+fn canary_harness(name: &str, protected: bool) -> (Harness, poe_recorder::domain::LibraryEntry) {
     let (root, library, capture_root, log_file) = spawn_tree(name);
     let start = now_unix_ms() - 61_000;
     // A native sidecar, exactly as finalize would write one: the canary must
@@ -861,7 +858,7 @@ fn canary_harness(
 }
 
 /// Media plus sidecar bytes for every entry still counted by the coordinator.
-fn counted_usage(entries: &[&warcraft_recorder::domain::LibraryEntry]) -> u64 {
+fn counted_usage(entries: &[&poe_recorder::domain::LibraryEntry]) -> u64 {
     entries
         .iter()
         .flat_map(|entry| [&entry.media_path, &entry.sidecar_path])

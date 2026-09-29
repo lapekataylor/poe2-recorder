@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The persistent player pane: one ClapperGtk video with Warcraft Recorder's
+//! The persistent player pane: one ClapperGtk video with PoE Recorder's
 //! compact control row, combat timeline, clip mode, and a single-view
 //! viewpoint selector. Volume/mute are process-shared session state; speed,
 //! position, and the clip range are session-only. All playback state lives in
@@ -19,11 +19,11 @@ use std::time::{Duration, Instant};
 use gtk4::prelude::*;
 use libadwaita as adw;
 
-use warcraft_recorder::coordinator::{AppSnapshot, ClipRange, Command};
-use warcraft_recorder::domain::{
+use poe_recorder::coordinator::{AppSnapshot, ClipRange, Command};
+use poe_recorder::domain::{
     Category, DeathMarkerVisibility, LibraryEntry, MarkerVisibility, RecordingId,
 };
-use warcraft_recorder::storage;
+use poe_recorder::storage;
 
 use super::damage_meter::DamageMeter;
 use super::library::Selection;

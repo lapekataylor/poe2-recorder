@@ -10,17 +10,17 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, mpsc};
 
-use warcraft_recorder::config::Config;
-use warcraft_recorder::coordinator;
+use poe_recorder::config::Config;
+use poe_recorder::coordinator;
 
 mod ui;
 
 use ui::tray_backend::TrayBackend;
 
 #[cfg(not(feature = "development"))]
-const APP_ID: &str = "io.github.JohanWes.WarcraftRecorder";
+const APP_ID: &str = "io.github.lapekataylor.PoeRecorder";
 #[cfg(feature = "development")]
-const APP_ID: &str = "io.github.JohanWes.WarcraftRecorder.Devel";
+const APP_ID: &str = "io.github.lapekataylor.PoeRecorder.Devel";
 
 fn main() {
     let setup = match coordinator::Setup::from_environment() {
@@ -28,7 +28,7 @@ fn main() {
         Err(error) => {
             tracing_subscriber::fmt::init();
             tracing::error!(%error, "cannot resolve the configuration directory");
-            eprintln!("warcraft-recorder: {error}");
+            eprintln!("poe-recorder: {error}");
             std::process::exit(1);
         }
     };
@@ -43,7 +43,7 @@ fn main() {
             std::process::exit(ui::run_remote(application));
         }
         Err(error) => {
-            eprintln!("warcraft-recorder: cannot register the application: {error}");
+            eprintln!("poe-recorder: cannot register the application: {error}");
             std::process::exit(1);
         }
     };

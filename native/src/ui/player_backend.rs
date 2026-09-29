@@ -19,7 +19,7 @@ pub enum SeekMode {
 
 pub use clapper::PlayerState;
 
-/// The concrete Clapper objects used by Warcraft Recorder's player UI.
+/// The concrete Clapper objects used by PoE Recorder's player UI.
 #[derive(Clone)]
 pub struct PlayerBackend {
     video: clapper_gtk::Video,

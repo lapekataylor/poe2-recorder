@@ -1020,6 +1020,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "poe-recorder"
+version = "1.0.11"
+dependencies = [
+ "clapper-player",
+ "clapper-player-gtk",
+ "gtk4",
+ "ksni",
+ "libadwaita",
+ "libc",
+ "poe2-log",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "poe2-log"
 version = "0.1.0"
 
@@ -1444,24 +1462,6 @@ name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03c2856837ef78f57382f06b2b8563a2f512f7185d732608fd9176cb3b8edf0e"
-
-[[package]]
-name = "warcraft-recorder"
-version = "1.0.11"
-dependencies = [
- "clapper-player",
- "clapper-player-gtk",
- "gtk4",
- "ksni",
- "libadwaita",
- "libc",
- "poe2-log",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
 
 [[package]]
 name = "wasm-bindgen"

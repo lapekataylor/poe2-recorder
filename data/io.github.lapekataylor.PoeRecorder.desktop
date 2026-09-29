@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: CC0-1.0
+[Desktop Entry]
+Type=Application
+Name=PoE Recorder
+Comment=Automatically record and review Path of Exile map runs
+Exec=poe-recorder
+Icon=io.github.lapekataylor.PoeRecorder
+Terminal=false
+Categories=AudioVideo;Video;
+StartupNotify=true
+StartupWMClass=io.github.lapekataylor.PoeRecorder

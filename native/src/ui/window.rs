@@ -13,11 +13,11 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use warcraft_recorder::coordinator::{AppSnapshot, Command, CoordinatorHandle};
-use warcraft_recorder::domain::{Category, RecoveryAction};
+use poe_recorder::coordinator::{AppSnapshot, Command, CoordinatorHandle};
+use poe_recorder::domain::{Category, RecoveryAction};
 
-use warcraft_recorder::domain::RecorderStatus;
-use warcraft_recorder::storage::now_unix_ms;
+use poe_recorder::domain::RecorderStatus;
+use poe_recorder::storage::now_unix_ms;
 
 use super::library::{Library, Selection};
 use super::operational_actions::{
@@ -195,7 +195,7 @@ impl Shell {
     ) -> Self {
         let window = adw::ApplicationWindow::builder()
             .application(application)
-            .title("Warcraft Recorder")
+            .title("PoE Recorder")
             .default_width(1440)
             .default_height(900)
             .width_request(640)
@@ -242,7 +242,7 @@ impl Shell {
         let sidebar = Sidebar::new(Rc::clone(&sink));
 
         // Content header: category title and the one primary menu.
-        let title = adw::WindowTitle::new("Warcraft Recorder", "");
+        let title = adw::WindowTitle::new("PoE Recorder", "");
         let menu_button = gtk4::MenuButton::new();
         menu_button.set_icon_name("open-menu-symbolic");
         menu_button.set_menu_model(Some(&primary_menu()));
@@ -399,7 +399,7 @@ impl Shell {
         toolbar_view.add_top_bar(&header);
         toasts.set_child(Some(&content_body));
         toolbar_view.set_content(Some(&toasts));
-        let nav_page = adw::NavigationPage::new(&toolbar_view, "Warcraft Recorder");
+        let nav_page = adw::NavigationPage::new(&toolbar_view, "PoE Recorder");
 
         let sidebar_page = adw::NavigationPage::new(&sidebar.widget, "Categories");
         let split = adw::NavigationSplitView::new();
@@ -539,10 +539,10 @@ impl Shell {
 
         // Last, so a notice lands over a window that already shows the real
         // state behind it.
-        if snapshot.config.last_seen_version != warcraft_recorder::VERSION
+        if snapshot.config.last_seen_version != poe_recorder::VERSION
             && !self.release_notes_shown.replace(true)
         {
-            let notes = release_notes(warcraft_recorder::VERSION);
+            let notes = release_notes(poe_recorder::VERSION);
             if notes.is_empty() {
                 // A build with no recorded commits: acknowledge it silently so
                 // the check stops firing on every snapshot.
@@ -750,24 +750,31 @@ fn open_settings(
 
 fn present_about(parent: &impl IsA<gtk4::Widget>, application: &adw::Application) {
     let about = adw::AboutDialog::new();
-    about.set_application_name("Warcraft Recorder");
+    about.set_application_name("PoE Recorder");
     about.set_application_icon(
         application
             .application_id()
             .as_deref()
-            .unwrap_or("warcraft-recorder"),
+            .unwrap_or("poe-recorder"),
     );
-    about.set_developer_name("JohanWes");
+    about.set_developer_name("lapekataylor");
     about.set_version(env!("CARGO_PKG_VERSION"));
     about.set_license_type(gtk4::License::Gpl30);
     about.set_comments(
-        "Automatic World of Warcraft recording and review.\n\nCategory icons: \
+        "Automatic Path of Exile map recording and review.\n\nCategory icons: \
          Lucide contributors (ISC License); dragon and dungeon icons by \
          Fonticons, Inc. (CC BY 4.0). Full notices are bundled with the \
          application.",
     );
-    about.set_website("https://github.com/JohanWes/wow-recorder-linuxwayland");
-    about.set_issue_url("https://github.com/JohanWes/wow-recorder-linuxwayland/issues");
+    about.set_website("https://github.com/lapekataylor/poe2-recorder");
+    about.set_issue_url("https://github.com/lapekataylor/poe2-recorder/issues");
+    about.add_credit_section(
+        Some("Based on"),
+        &[
+            "Warcraft Recorder https://github.com/aza547/wow-recorder",
+            "Warcraft Recorder for Linux by JohanWes https://github.com/JohanWes/wow-recorder-linuxwayland",
+        ],
+    );
     about.present(Some(parent));
 }
 
@@ -803,8 +810,8 @@ pub(crate) mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use warcraft_recorder::config::Config;
-    use warcraft_recorder::domain::{
+    use poe_recorder::config::Config;
+    use poe_recorder::domain::{
         ActivityDetails, Category, Codec, CorrelatedActivity, GameFlavor, LibraryEntry, MediaFacts,
         Outcome, Problem, RecorderStatus, RecordingId,
     };
@@ -888,11 +895,11 @@ pub(crate) mod tests {
         assert_eq!(content_view(&snapshot).problem_banner, None);
 
         snapshot.setup_problems = vec![
-            warcraft_recorder::config::ValidationProblem {
+            poe_recorder::config::ValidationProblem {
                 field: "storage.recording_dir",
                 message: "Choose a recording directory.".to_owned(),
             },
-            warcraft_recorder::config::ValidationProblem {
+            poe_recorder::config::ValidationProblem {
                 field: "flavors",
                 message: "Enable at least one World of Warcraft flavor.".to_owned(),
             },

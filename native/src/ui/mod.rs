@@ -34,9 +34,9 @@ use std::time::Duration;
 use gtk4::prelude::*;
 use libadwaita as adw;
 
-use warcraft_recorder::config::LayoutSettings;
-use warcraft_recorder::coordinator::{Command, CoordinatorHandle};
-use warcraft_recorder::domain::Category;
+use poe_recorder::config::LayoutSettings;
+use poe_recorder::coordinator::{Command, CoordinatorHandle};
+use poe_recorder::domain::Category;
 
 use tray_backend::{TrayBackend, TrayEvent};
 
@@ -204,14 +204,14 @@ pub fn register(app_id: &'static str) -> Result<Registration, gtk4::glib::Error>
             return;
         };
         let provider = gtk4::CssProvider::new();
-        provider.load_from_resource("/io/github/JohanWes/WarcraftRecorder/style.css");
+        provider.load_from_resource("/io/github/lapekataylor/PoeRecorder/style.css");
         gtk4::style_context_add_provider_for_display(
             &display,
             &provider,
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
         gtk4::IconTheme::for_display(&display)
-            .add_resource_path("/io/github/JohanWes/WarcraftRecorder/icons");
+            .add_resource_path("/io/github/lapekataylor/PoeRecorder/icons");
     });
 
     application.register(None::<&gtk4::gio::Cancellable>)?;
@@ -229,7 +229,7 @@ struct Aligned<T: ?Sized>(T);
 
 static UI_RESOURCES: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(
     env!("OUT_DIR"),
-    "/warcraft-recorder.gresource"
+    "/poe-recorder.gresource"
 )));
 
 /// Register the embedded UI bundle (CSS, icons) that `startup` needs.
@@ -246,7 +246,7 @@ fn register_ui_resources() {
 /// after logging is up and only in the primary instance.
 fn register_spell_resources() {
     let spells = [
-        "/app/share/warcraft-recorder/spells.gresource",
+        "/app/share/poe-recorder/spells.gresource",
         concat!(env!("OUT_DIR"), "/spells.gresource"),
     ]
     .into_iter()
@@ -404,7 +404,7 @@ pub fn run(
             {
                 shell.apply_snapshot(&snapshot);
                 if let Some(tray) = &tray {
-                    let title = format!("Warcraft Recorder: {}", status::view(&snapshot).title);
+                    let title = format!("PoE Recorder: {}", status::view(&snapshot).title);
                     if *last_tray_title.borrow() != title {
                         tray.update(title.clone(), ksni::Status::Active);
                         *last_tray_title.borrow_mut() = title;
@@ -461,6 +461,6 @@ pub fn primary_menu() -> gtk4::gio::Menu {
     let menu = gtk4::gio::Menu::new();
     menu.append(Some("Test recording…"), Some("app.test-recording"));
     menu.append(Some("Open logs"), Some("app.open-logs"));
-    menu.append(Some("About Warcraft Recorder"), Some("app.about"));
+    menu.append(Some("About PoE Recorder"), Some("app.about"));
     menu
 }

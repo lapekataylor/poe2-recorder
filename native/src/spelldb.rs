@@ -26,7 +26,7 @@ use serde::Deserialize;
 pub struct SpellInfo {
     pub description: Box<str>,
     /// Icon basename, e.g. `spell_fire_flamebolt`; the PNG lives at
-    /// `/io/github/JohanWes/WarcraftRecorder/spells/{icon}.png`.
+    /// `/io/github/lapekataylor/PoeRecorder/spells/{icon}.png`.
     pub icon: Box<str>,
 }
 

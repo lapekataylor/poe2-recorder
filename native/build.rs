@@ -39,7 +39,7 @@ fn main() {
         &data,
         &style_dir,
         &data.join("resources.gresource.xml"),
-        &out_dir.join("warcraft-recorder.gresource"),
+        &out_dir.join("poe-recorder.gresource"),
     );
     compile(
         &data,

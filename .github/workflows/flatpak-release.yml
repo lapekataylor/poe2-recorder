@@ -1,4 +1,4 @@
-name: Warcraft Recorder Flatpak
+name: PoE Recorder Flatpak
 
 on:
   pull_request:
@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 env:
-  APP_ID: io.github.JohanWes.WarcraftRecorder
-  MANIFEST: flatpak/io.github.JohanWes.WarcraftRecorder.yml
+  APP_ID: io.github.lapekataylor.PoeRecorder
+  MANIFEST: flatpak/io.github.lapekataylor.PoeRecorder.yml
 
 jobs:
   flatpak:
@@ -32,7 +32,7 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb # v6.7
         with:
           manifest-path: ${{ env.MANIFEST }}
-          bundle: warcraft-recorder.flatpak
+          bundle: poe-recorder.flatpak
           build-dir: build-flatpak
           repo-dir: repo
           branch: stable
@@ -41,17 +41,17 @@ jobs:
       - name: Add mirrored AppStream screenshot
         run: |
           ostree --repo=repo refs --delete \
-            runtime/io.github.JohanWes.WarcraftRecorder.Debug/x86_64/stable || true
+            runtime/io.github.lapekataylor.PoeRecorder.Debug/x86_64/stable || true
           mkdir -p screenshot-tree
           cp data/screenshots/*.png screenshot-tree/
           ostree --repo=repo commit --branch=screenshots/x86_64 \
-            --subject='Warcraft Recorder AppStream screenshots' screenshot-tree
+            --subject='PoE Recorder AppStream screenshots' screenshot-tree
           flatpak build-update-repo repo
       - name: Validate release inputs
         run: |
           flatpak-builder-lint --exceptions --user-exceptions flatpak/lint-exceptions.json manifest "$MANIFEST"
           if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
-            flatpak-builder-lint --appid "$APP_ID" appstream data/io.github.JohanWes.WarcraftRecorder.metainfo.xml
+            flatpak-builder-lint --appid "$APP_ID" appstream data/io.github.lapekataylor.PoeRecorder.metainfo.xml
           else
             echo 'AppStream URL validation runs after the screenshot is present on main.'
           fi
@@ -61,8 +61,8 @@ jobs:
       - name: Upload candidate artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          name: warcraft-recorder-flatpak-candidate
-          path: warcraft-recorder.flatpak
+          name: poe-recorder-flatpak-candidate
+          path: poe-recorder.flatpak
           if-no-files-found: error
 
   release:
@@ -89,7 +89,7 @@ jobs:
         uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb # v6.7
         with:
           manifest-path: ${{ env.MANIFEST }}
-          bundle: warcraft-recorder.flatpak
+          bundle: poe-recorder.flatpak
           build-dir: build-flatpak
           repo-dir: repo
           branch: stable
@@ -101,29 +101,29 @@ jobs:
           FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
         run: |
           ostree --repo=repo refs --delete \
-            runtime/io.github.JohanWes.WarcraftRecorder.Debug/x86_64/stable || true
+            runtime/io.github.lapekataylor.PoeRecorder.Debug/x86_64/stable || true
           mkdir -p screenshot-tree
           cp data/screenshots/*.png screenshot-tree/
           ostree --repo=repo commit --gpg-sign="$FLATPAK_GPG_KEY_ID" \
             --branch=screenshots/x86_64 \
-            --subject='Warcraft Recorder AppStream screenshots' screenshot-tree
+            --subject='PoE Recorder AppStream screenshots' screenshot-tree
       - name: Validate signed outputs
         env:
           FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
         run: |
           flatpak-builder-lint --exceptions --user-exceptions flatpak/lint-exceptions.json manifest "$MANIFEST"
-          flatpak-builder-lint --appid "$APP_ID" --exceptions --user-exceptions flatpak/lint-exceptions.json appstream data/io.github.JohanWes.WarcraftRecorder.metainfo.xml
+          flatpak-builder-lint --appid "$APP_ID" --exceptions --user-exceptions flatpak/lint-exceptions.json appstream data/io.github.lapekataylor.PoeRecorder.metainfo.xml
           flatpak-builder-lint --exceptions --user-exceptions flatpak/lint-exceptions.json repo repo
           bash scripts/prepare-flatpakrepo.sh repo
-          sha256sum warcraft-recorder.flatpak > warcraft-recorder.flatpak.sha256
-          sha256sum repo/summary repo/index.flatpakrepo >> warcraft-recorder.flatpak.sha256
+          sha256sum poe-recorder.flatpak > poe-recorder.flatpak.sha256
+          sha256sum repo/summary repo/index.flatpakrepo >> poe-recorder.flatpak.sha256
       - name: Upload release-candidate artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          name: warcraft-recorder-flatpak-${{ github.ref_name }}
+          name: poe-recorder-flatpak-${{ github.ref_name }}
           path: |
-            warcraft-recorder.flatpak
-            warcraft-recorder.flatpak.sha256
+            poe-recorder.flatpak
+            poe-recorder.flatpak.sha256
             repo
           if-no-files-found: error
 
@@ -139,7 +139,7 @@ jobs:
       - name: Download signed candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: warcraft-recorder-flatpak-${{ github.ref_name }}
+          name: poe-recorder-flatpak-${{ github.ref_name }}
           path: candidate
       - name: Publish release
         env:
@@ -153,7 +153,7 @@ jobs:
           ' CHANGELOG.md > notes.md
           test -s notes.md
           gh release create "$GITHUB_REF_NAME" \
-            --title "Warcraft Recorder $version" \
+            --title "PoE Recorder $version" \
             --notes-file notes.md \
-            candidate/warcraft-recorder.flatpak \
-            candidate/warcraft-recorder.flatpak.sha256
+            candidate/poe-recorder.flatpak \
+            candidate/poe-recorder.flatpak.sha256

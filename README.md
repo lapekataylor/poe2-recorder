@@ -1,59 +1,45 @@
-# Warcraft Recorder
+# PoE Recorder
 
-Warcraft Recorder records World of Warcraft on Linux. It reads the combat log,
-detects each activity and saves a video with a metadata file beside it. It is a
-native Rust and GTK4 application, distributed as a Flatpak for Wayland
-sessions.
+PoE Recorder records Path of Exile 2 on Linux. It follows the game's
+`Client.txt` log, starts recording when you enter a waystone map, stops when
+you leave it, and keeps a library of the videos with a metadata file beside
+each one. It is a native Rust and GTK4 application, built as a Flatpak for
+Wayland sessions.
 
-![Warcraft Recorder library with a selected Mythic+ recording](data/screenshots/warcraft-recorder-library.png)
+It is a modified version of [Warcraft Recorder](https://github.com/aza547/wow-recorder),
+based on JohanWes's native Linux port,
+[wow-recorder-linuxwayland](https://github.com/JohanWes/wow-recorder-linuxwayland).
+Path of Exile 1 support is planned.
 
 ## Features
 
-- **Automatic recording** of raid boss pulls, Mythic+ dungeons, arenas, solo
-  shuffle and battlegrounds. `gpu-screen-recorder` keeps a replay buffer, so
-  each video starts before the activity was detected.
-- **Library** with a category sidebar and a table you can sort by column and
-  filter by search chips (player, spec, zone, encounter, result, difficulty)
-  and date range. Recordings can be tagged, protected and deleted. The oldest
-  unprotected recordings are removed when the library exceeds the storage
-  limit in Settings.
-- **Player** with a combat timeline showing deaths and encounter and round
-  boundaries, playback speeds from 0.25x to 2x, frame stepping while paused
-  (`,` and `.`), jumping between markers (`[` and `]`), and clipping.
-- **Combat meter** over the video, toggled with `M`. It shows damage done,
-  damage taken, healing, interrupts, dispels, casts, deaths and buff uptime,
-  for the current fight or the whole recording. You can filter by target, open
-  a player to see their spells, and click a death or event row to seek the
-  video to a few seconds before it.
-- **Background recording** from a tray icon. Closing or minimizing the window
-  hides it to the tray by default, and Settings can start the app minimized.
+- **Automatic map recording.** Entering a map starts a recording.
+  `gpu-screen-recorder` keeps a replay buffer, so each video starts a few
+  seconds before the map loaded.
+- **Portal trips stay in one video.** Leaving the map starts a grace period
+  (5 minutes by default). Coming back to the same map within it continues
+  the recording; entering a different map ends the previous run at once.
+- **Sub-areas count as the map.** Abyss depths and similar areas entered from
+  inside a map are part of the run.
+- **No hideout tail.** When a run is saved, the video is cut five seconds
+  after you last left the map.
+- **Picks up where you are.** Starting the app while you are in a map begins
+  recording straight away.
+- **Timeline markers** for deaths and for time spent out of the map.
+- **Library** with a Map runs section showing map, area level, deaths,
+  duration and date. Recordings can be tagged, protected and deleted, and the
+  oldest unprotected recordings are removed above the storage limit.
+- **Player** with playback speeds from 0.25x to 2x, frame stepping while
+  paused (`,` and `.`), jumping between markers (`[` and `]`), and clipping.
+- **Background recording** from a tray icon.
 
-![Combat meter over a playing raid recording: a player's spells and tooltip, a target filter, and a death recap that seeks the video](data/screenshots/damage-meter-demo.avif)
+The code still contains the World of Warcraft support it was forked from; it
+will be removed.
 
-## Install
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/JohanWes/wow-recorder-linuxwayland/main/install.sh | bash
-```
-
-The installer adds the project's signed Flatpak remote, installs the app and
-starts it. If Flatpak is missing, it stops and prints the package command for
-common distributions. It adds Flathub when the GNOME 50 runtime is not
-available from another remote. After installing, it warns about an X11
-session, a missing screen-capture portal or PipeWire not running.
-
-Or add the remote and install directly:
-
-```sh
-flatpak remote-add --user --if-not-exists warcraft-recorder \
-  https://johanwes.github.io/wow-recorder-linuxwayland/index.flatpakrepo
-flatpak install --user warcraft-recorder io.github.JohanWes.WarcraftRecorder
-```
-
-Requirements:
+## Requirements
 
 - A Wayland session. X11 is not supported.
-- Flatpak, with Flathub for the GNOME 50 runtime.
+- Flatpak and `flatpak-builder`, with Flathub for the GNOME 50 SDK.
 - `xdg-desktop-portal` with a ScreenCast backend for your desktop, and
   PipeWire.
 - A GPU with hardware video encoding.
@@ -61,70 +47,63 @@ Requirements:
 `gpu-screen-recorder`, the Clapper video player and FFmpeg are bundled in the
 Flatpak.
 
+## Build and install
+
+There are no prebuilt releases yet. Build the development Flatpak from the
+repository root:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.rust-stable//25.08
+flatpak-builder --user --install --force-clean .flatpak-builder/build-devel \
+  flatpak/io.github.lapekataylor.PoeRecorder.Devel.yml
+```
+
+The first build compiles FFmpeg, `gpu-screen-recorder` and Clapper and takes a
+while; later builds reuse them. Start the app from your launcher as
+**PoE Recorder (Development)**, or with
+`flatpak run io.github.lapekataylor.PoeRecorder.Devel`.
+
 ## Setup
 
-1. Open Settings and choose a **recording folder** and your World of Warcraft
-   **Logs folder**, for example `.../World of Warcraft/_retail_/Logs`.
-2. In WoW, enable **Advanced Combat Logging** under Options → System →
-   Network. The status card warns when it is off.
-3. Install an addon that starts combat logging when you enter an instance,
-   such as
-   [SimpleCombatLogger](https://www.curseforge.com/wow/addons/simplecombatlogger).
-4. Leave the app running. Each activity appears in the library when it ends.
+1. Open Settings, turn on **Path of Exile 2 logs** and choose the game's
+   `logs` folder, for example
+   `.../steamapps/common/Path of Exile 2/logs`.
+2. Choose a **recording folder**.
+3. When asked, choose the screen to capture.
+4. Leave the app running and play. Each map run appears under **Map runs**
+   when it ends.
 
 The tray icon uses the StatusNotifierItem protocol. GNOME needs the
 [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
 to show it. Without a tray, closing the window quits the app.
 
-## Footprint
-
-Measured on an AMD Ryzen 7 9800X3D with a Radeon RX 9070:
-
-| Measurement | Value |
-|---|---|
-| Window open, empty library | about 147 MB RSS, 31 threads |
-| Tray only (started minimized) | about 57 MB RSS, 12 threads |
-| CPU while idle | about 0% |
-| Startup scan, 58 recordings | about 1.0 s, about 30 MB above the empty baseline |
-| Installed size | about 38 MB |
-| First download | about 18 MB |
-| Typical update | about 5 MB |
-
-The installed size covers the app binary (about 5 MB), the spell database and
-the bundled FFmpeg, `gpu-screen-recorder` and Clapper. The GNOME runtime is
-shared with other Flatpaks and not included. The 23 MB spell database is a
-separate file, so an update only downloads it again when it changes. Combat
-meter data is loaded for the selected recording only. Video encoding runs on
-the GPU through `gpu-screen-recorder`.
-
-## Update and uninstall
-
-Re-run the installer, or:
-
-```sh
-flatpak update --user io.github.JohanWes.WarcraftRecorder
-```
-
-To uninstall:
-
-```sh
-flatpak uninstall --user io.github.JohanWes.WarcraftRecorder
-```
-
-Recordings are ordinary video and JSON files in your recording folder. An
-uninstall does not remove them. Add `--delete-data` to also remove the app's
-settings.
-
 ## Development
 
-All code is one Cargo package under `native/`. From the repository root:
+The app is one Cargo package under `native/`; the `Client.txt` parser and
+map-run tracker are a separate, dependency-free crate in `native/poe2-log/`.
+Building the app outside Flatpak needs the Clapper libraries
+(`libclapper`, `libclapper-gtk`). From the repository root:
 
 ```sh
 cargo fmt --manifest-path native/Cargo.toml --check
 cargo clippy --manifest-path native/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path native/Cargo.toml --all-targets
-cargo build --manifest-path native/Cargo.toml --release
+cargo test --manifest-path native/poe2-log/Cargo.toml
 ```
 
-See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) and [`docs/RELEASING.md`](docs/RELEASING.md). Licensed GPL-3.0-or-later.
-Capture uses [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/); based on the original [Warcraft Recorder](https://github.com/aza547/wow-recorder).
+`scripts/fake-poe2-log.py` writes simulated `Client.txt` lines for testing
+without the game, and the `watch` example prints what the recorder would do
+for a log:
+
+```sh
+cargo run --manifest-path native/poe2-log/Cargo.toml --example watch -- <Client.txt> --verbose
+```
+
+See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md).
+
+## License
+
+GPL-3.0-or-later. Capture uses
+[`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/).
+PoE Recorder is not affiliated with or endorsed by Grinding Gear Games.

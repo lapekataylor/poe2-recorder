@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use warcraft_recorder::domain::{ActivityDetails, GameFlavor, LibraryEntry, Outcome};
+use poe_recorder::domain::{ActivityDetails, GameFlavor, LibraryEntry, Outcome};
 
 // Chip groupings. Distinct groupings keep otherwise-equal labels
 // (e.g. a "Frost" spec vs a hypothetical zone) from colliding in matching.
@@ -307,7 +307,7 @@ static AFFIX_NAMES: &[(u32, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warcraft_recorder::domain::{Category, CombatantSummary, PlayerSummary};
+    use poe_recorder::domain::{Category, CombatantSummary, PlayerSummary};
 
     fn base(category: Category, details: ActivityDetails, outcome: Outcome) -> LibraryEntry {
         let mut entry = crate::ui::window::tests::entry(category, "T", 1_000);

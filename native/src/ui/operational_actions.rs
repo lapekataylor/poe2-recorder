@@ -332,8 +332,10 @@ pub fn present_reselect_dialog(parent: &gtk4::Widget, sink: ActionSink) {
     let dialog = adw::AlertDialog::new(
         Some("Reselect capture target"),
         Some(
-            "Your desktop will show its screen-share prompt to pick the monitor or window to \
-             record. Cancelling the prompt keeps the current selection.",
+            "Your desktop will show its screen-share prompt. Choose the screen the game runs \
+             on, and allow restoring it if asked, so the choice is remembered. A shared game \
+             window stops recording whenever the game closes. Cancelling the prompt keeps the \
+             current selection.",
         ),
     );
     dialog.add_responses(&[("cancel", "Cancel"), ("reselect", "Reselect")]);

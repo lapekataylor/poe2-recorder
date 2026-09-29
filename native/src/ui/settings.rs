@@ -501,6 +501,12 @@ impl Settings {
         target_group.set_title("Capture target");
         let target_row = adw::ActionRow::new();
         target_row.set_title("Screen or window");
+        // A window share ends when that window closes, so the portal asks
+        // again after every game restart; a screen share is remembered.
+        target_row.set_subtitle(
+            "Choose the screen the game runs on. A shared game window stops \
+             recording whenever the game closes and has to be chosen again.",
+        );
         let reselect = gtk4::Button::with_label("Reselect capture target");
         reselect.set_valign(gtk4::Align::Center);
         reselect.set_tooltip_text(Some(

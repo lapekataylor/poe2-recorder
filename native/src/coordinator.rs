@@ -46,9 +46,7 @@ use crate::storage::{EntryUpdate, LibraryIndex, Storage, now_unix_ms};
 /// inside a flush gap and discarded before its player is identified.
 const RETAIL_DATA_TIMEOUT_MS: i64 = 10 * 60_000;
 const CLASSIC_DATA_TIMEOUT_MS: i64 = 2 * 60_000;
-/// Path of Exile 2 writes nothing for up to ~10 minutes of normal play in a
-/// map; this only catches a crash or a closed game.
-const POE2_DATA_TIMEOUT_MS: i64 = 20 * 60_000;
+const POE2_DATA_TIMEOUT_MS: i64 = crate::poe2::QUIET_LOG_MS;
 /// Commands handled per tick before the loop returns to polling.
 const COMMAND_BATCH: usize = 16;
 /// Bounded problem list surfaced in the snapshot.
@@ -721,6 +719,7 @@ impl Coordinator {
                 &poe2.log_dir.path,
                 self.setup.media.utc_offset_minutes,
                 grace_ms,
+                now_unix_ms(),
             ) {
                 Ok(source) => self.poe2 = Some(source),
                 Err(error) => {
@@ -773,7 +772,12 @@ impl Coordinator {
     fn apply_poe2(&mut self, action: Poe2Action) {
         self.dirty = true;
         match action {
-            Poe2Action::Begin(draft) => self.begin(*draft, 0),
+            Poe2Action::Begin(draft) => {
+                // Log times have whole seconds; a run picked up on opening
+                // began minutes ago. The replay buffer covers what it can.
+                let late_by_ms = (now_unix_ms() - draft.started_at_ms).max(0);
+                self.begin(*draft, late_by_ms);
+            }
             Poe2Action::Complete(draft) => self.finish(*draft),
         }
     }

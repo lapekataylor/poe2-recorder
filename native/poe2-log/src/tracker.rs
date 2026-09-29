@@ -99,6 +99,15 @@ impl MapTracker {
         matches!(self.state, State::Idle)
     }
 
+    /// The run in progress and whether the player is inside its map now.
+    pub fn current(&self) -> Option<(&MapStart, bool)> {
+        match &self.state {
+            State::Idle => None,
+            State::InMap(run) => Some((&run.start, true)),
+            State::Away { run, .. } => Some((&run.start, false)),
+        }
+    }
+
     pub fn handle(&mut self, line: &ParsedLine) -> Vec<MapAction> {
         let at_ms = line.occurred_at_ms;
         // Events can arrive in a batch after a quiet spell with no `tick` in
@@ -386,6 +395,16 @@ mod tests {
         tracker.handle(&death);
         let actions = tracker.force_end(30_000);
         assert!(completed(&actions)[0].deaths.is_empty());
+    }
+
+    #[test]
+    fn current_reports_the_run_and_where_the_player_is() {
+        let mut tracker = MapTracker::new(GRACE);
+        assert!(tracker.current().is_none());
+        tracker.handle(&map(0, 7));
+        assert!(matches!(tracker.current(), Some((start, true)) if start.seed == 7));
+        tracker.handle(&hideout(10));
+        assert!(matches!(tracker.current(), Some((_, false))));
     }
 
     #[test]

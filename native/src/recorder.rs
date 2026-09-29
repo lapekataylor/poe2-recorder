@@ -906,6 +906,11 @@ fn build_gsr_args(config: &CaptureConfig) -> Vec<OsString> {
         "-v".into(),
         "no".into(),
     ];
+    // GSR scales down to fit, keeping the aspect ratio.
+    if let Some((width, height)) = settings.resolution.limit() {
+        args.push("-s".into());
+        args.push(format!("{width}x{height}").into());
+    }
     let mut audio: Vec<&str> = Vec::new();
     if !settings.audio_output.is_empty() {
         audio.push(settings.audio_output.as_str());
@@ -1059,6 +1064,7 @@ fn parse_audio_devices(text: &str) -> AudioDevices {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::CaptureResolution;
 
     fn fake_gsr() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/native/bin/fake-gsr.sh")
@@ -1169,6 +1175,14 @@ mod tests {
         config.settings.audio_input = None;
         let args = build_gsr_args(&config);
         assert!(!args.contains(&OsString::from("-a")));
+        // Native size passes no -s; a chosen resolution is a WxH limit.
+        assert!(!args.contains(&OsString::from("-s")));
+        config.settings.resolution = CaptureResolution::P1080;
+        let args = build_gsr_args(&config);
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-s" && pair[1] == "1920x1080")
+        );
     }
 
     #[test]

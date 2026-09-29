@@ -22,7 +22,7 @@ use libadwaita::prelude::*;
 
 use poe_recorder::config::{AuthorizedPath, Config, ValidationProblem};
 use poe_recorder::coordinator::{AppSnapshot, Command};
-use poe_recorder::domain::{Codec, RecorderStatus, ReplayStorage, StorageLimit};
+use poe_recorder::domain::{CaptureResolution, Codec, RecorderStatus, ReplayStorage, StorageLimit};
 use poe_recorder::recorder::{AudioDevice, Recorder};
 use poe_recorder::storage::now_unix_ms;
 
@@ -76,7 +76,7 @@ pub struct EnabledAccess {
     pub set: fn(&mut Config, bool),
 }
 
-pub static CAPTURE_COMBOS: [ComboSpec; 2] = [
+pub static CAPTURE_COMBOS: [ComboSpec; 3] = [
     ComboSpec {
         field: "capture.codec",
         title: "Video codec",
@@ -107,6 +107,25 @@ pub static CAPTURE_COMBOS: [ComboSpec; 2] = [
                 ReplayStorage::Disk
             } else {
                 ReplayStorage::Ram
+            }
+        },
+    },
+    ComboSpec {
+        field: "capture.resolution",
+        title: "Resolution",
+        choices: &["Native", "1440p", "1080p", "720p"],
+        get: |config| match config.capture.resolution {
+            CaptureResolution::Native => 0,
+            CaptureResolution::P1440 => 1,
+            CaptureResolution::P1080 => 2,
+            CaptureResolution::P720 => 3,
+        },
+        set: |config, index| {
+            config.capture.resolution = match index {
+                1 => CaptureResolution::P1440,
+                2 => CaptureResolution::P1080,
+                3 => CaptureResolution::P720,
+                _ => CaptureResolution::Native,
             }
         },
     },
@@ -467,6 +486,7 @@ impl Settings {
         let capture_page = adw::PreferencesPage::new();
         let capture_group = adw::PreferencesGroup::new();
         capture_group.set_title("Capture");
+        capture_group.add(&combo_row(&CAPTURE_COMBOS[2], &draft, &registry, &refresh));
         capture_group.add(&combo_row(&CAPTURE_COMBOS[0], &draft, &registry, &refresh));
         for spec in &CAPTURE_SPINS {
             capture_group.add(&spin_row(spec, &draft, &registry, &refresh));

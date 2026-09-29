@@ -16,7 +16,9 @@ use std::os::unix::fs::OpenOptionsExt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::domain::{Category, Codec, DeathMarkerVisibility, ReplayStorage, StorageLimit};
+use crate::domain::{
+    CaptureResolution, Category, Codec, DeathMarkerVisibility, ReplayStorage, StorageLimit,
+};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const APP_ID: &str = "io.github.lapekataylor.PoeRecorder";
@@ -116,6 +118,9 @@ impl Default for StorageSettings {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaptureSettings {
+    /// Absent in settings written before it existed: native size.
+    #[serde(default)]
+    pub resolution: CaptureResolution,
     pub fps: u32,
     pub codec: Codec,
     pub bitrate_kbps: u32,
@@ -131,6 +136,7 @@ pub struct CaptureSettings {
 impl Default for CaptureSettings {
     fn default() -> Self {
         Self {
+            resolution: CaptureResolution::Native,
             fps: 60,
             codec: Codec::H264,
             bitrate_kbps: 20_000,
@@ -827,10 +833,15 @@ mod tests {
         json["activities"]["record_raids"] = serde_json::json!(true);
         json["interface"]["round_markers"] = serde_json::json!("visible");
         json["interface"]["selected_category"] = serde_json::json!("three_v_three");
+        json["capture"]
+            .as_object_mut()
+            .expect("capture object")
+            .remove("resolution");
         fs::write(&path, json.to_string()).expect("write legacy config");
 
         let loaded = Config::load(&path).expect("load legacy config");
         assert_eq!(loaded.interface.selected_category, Category::MapRuns);
+        assert_eq!(loaded.capture.resolution, CaptureResolution::Native);
         assert_eq!(loaded.flavors, ready_config().flavors);
 
         fs::remove_dir_all(directory).expect("remove test directory");

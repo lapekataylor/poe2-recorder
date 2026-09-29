@@ -72,6 +72,33 @@ pub enum Codec {
     Av1,
 }
 
+/// The largest size recordings are made at. Capture is scaled down to fit
+/// inside it, keeping the aspect ratio; `Native` records the source as is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CaptureResolution {
+    #[default]
+    #[serde(rename = "native")]
+    Native,
+    #[serde(rename = "1440p")]
+    P1440,
+    #[serde(rename = "1080p")]
+    P1080,
+    #[serde(rename = "720p")]
+    P720,
+}
+
+impl CaptureResolution {
+    /// Width and height to fit the capture inside, if any.
+    pub fn limit(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Native => None,
+            Self::P1440 => Some((2560, 1440)),
+            Self::P1080 => Some((1920, 1080)),
+            Self::P720 => Some((1280, 720)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplayStorage {

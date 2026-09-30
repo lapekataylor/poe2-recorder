@@ -4,6 +4,11 @@ Commit subjects per release, written by `scripts/generate-release-notes.sh` and
 compiled into the binary: the "What's new" dialog reads the section matching the
 running version. Only `## <version>` headings and `- ` lines are parsed.
 
+## 0.2.0
+- Record Path of Exile 1 map runs
+- Open the newest recording paused
+- Show Path of Exile 1 map names without the "Worlds" prefix
+
 ## 0.1.0
 - Record Path of Exile 2 map runs from Client.txt
 - Keep portal trips and Abyss sub-areas in one map-run video

@@ -8,7 +8,7 @@
   <summary>Automatically record and review Path of Exile map runs</summary>
   <description>
     <p>
-      PoE Recorder records each Path of Exile 2 map run from the game's
+      PoE Recorder records each Path of Exile or Path of Exile 2 map run from the game's
       Client.txt log and keeps a local library of videos with the map, area
       level, deaths and trips out of the map.
     </p>
@@ -26,6 +26,11 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.2.0" date="2026-09-29">
+      <description>
+        <p>Path of Exile 1 support.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-29">
       <description>
         <p>Initial native development package.</p>

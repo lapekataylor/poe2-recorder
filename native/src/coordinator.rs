@@ -2,7 +2,7 @@
 
 //! Coordinator-owned application state and commands.
 //!
-//! One thread owns `Config`, the Path of Exile 2 log source, the `Recorder`,
+//! One thread owns `Config`, the Path of Exile log sources, the `Recorder`,
 //! the library index, and the in-flight recording draft. The GTK
 //! thread holds a `CoordinatorHandle`: one bounded command sender, one
 //! capacity-one snapshot receiver, and one capacity-one stopped receiver. A
@@ -275,8 +275,8 @@ pub struct Coordinator {
     recorder: Recorder,
     armed: bool,
     storage: Storage,
-    /// Path of Exile 2 map runs, when enabled.
-    poe2: Option<Poe2Source>,
+    /// Map runs, one source per enabled game.
+    sources: Vec<Poe2Source>,
     /// Per flavour: wall-clock and log time of the newest observed event.
     last_event: HashMap<GameFlavor, (i64, i64)>,
     index: LibraryIndex,
@@ -352,7 +352,7 @@ impl Coordinator {
             recorder: Recorder::new(),
             armed: false,
             storage,
-            poe2: None,
+            sources: Vec::new(),
             last_event: HashMap::new(),
             index: LibraryIndex::default(),
             active: None,
@@ -629,9 +629,9 @@ impl Coordinator {
                         CAPTURE_STOPPED_PROBLEM,
                         Some(format!("gpu-screen-recorder exited with code {code:?}")),
                     );
-                    if self.active.take().is_some() {
+                    if let Some(active) = self.active.take() {
                         self.pending_test_end = None;
-                        self.drop_activity();
+                        self.drop_activity(&active.draft.flavor);
                         self.sweep_capture_dirs();
                     }
                 }
@@ -653,27 +653,38 @@ impl Coordinator {
 
     fn open_tailers(&mut self) -> bool {
         // A run in progress would lose its tracker state: finish it first.
-        if let Some(mut source) = self.poe2.take() {
+        for mut source in std::mem::take(&mut self.sources) {
             for action in source.force_end(now_unix_ms()) {
                 self.apply_poe2(action);
             }
         }
         self.last_event.clear();
         let mut all_opened = true;
-        let poe2 = &self.config.flavors.poe2;
-        if poe2.enabled && !poe2.log_dir.path.as_os_str().is_empty() {
-            let grace_ms = i64::from(self.config.activities.map_grace_seconds) * 1_000;
+        let grace_ms = i64::from(self.config.activities.map_grace_seconds) * 1_000;
+        let flavors: Vec<(GameFlavor, PathBuf)> = self
+            .config
+            .flavors
+            .iter()
+            .into_iter()
+            .filter(|(_, settings)| {
+                settings.enabled && !settings.log_dir.path.as_os_str().is_empty()
+            })
+            .map(|(flavor, settings)| (flavor, settings.log_dir.path.clone()))
+            .collect();
+        for (flavor, log_dir) in flavors {
+            let game = flavor.name();
             match Poe2Source::open(
-                &poe2.log_dir.path,
+                flavor,
+                &log_dir,
                 self.setup.media.utc_offset_minutes,
                 grace_ms,
                 now_unix_ms(),
             ) {
-                Ok(source) => self.poe2 = Some(source),
+                Ok(source) => self.sources.push(source),
                 Err(error) => {
                     all_opened = false;
                     self.push_problem(
-                        "The Path of Exile 2 logs folder could not be watched.",
+                        format!("The {game} logs folder could not be watched."),
                         Some(error.to_string()),
                         Some(RecoveryAction::OpenSettings),
                     );
@@ -684,20 +695,19 @@ impl Coordinator {
     }
 
     fn poll_logs(&mut self) {
-        let Some(source) = self.poe2.as_mut() else {
-            return;
-        };
         let now_ms = now_unix_ms();
-        let actions = match source.poll(now_ms) {
-            Ok(actions) => actions,
-            Err(error) => {
-                tracing::warn!(%error, "Path of Exile 2 log poll failed");
-                Vec::new()
+        let mut actions = Vec::new();
+        for source in &mut self.sources {
+            match source.poll(now_ms) {
+                Ok(polled) => actions.extend(polled),
+                Err(error) => {
+                    tracing::warn!(%error, game = source.flavor().name(), "log poll failed");
+                }
             }
-        };
-        if let Some(read_at_ms) = source.last_read_ms() {
-            self.last_event
-                .insert(GameFlavor::Poe2, (read_at_ms, read_at_ms));
+            if let Some(read_at_ms) = source.last_read_ms() {
+                self.last_event
+                    .insert(source.flavor().clone(), (read_at_ms, read_at_ms));
+            }
         }
         for action in actions {
             self.apply_poe2(action);
@@ -756,7 +766,7 @@ impl Coordinator {
             self.end_capture();
         }
         if self.active.is_some() {
-            self.drop_activity();
+            self.drop_activity(&draft.flavor);
             return;
         }
         // GSR is still writing the previous capture. Hold the draft instead of
@@ -764,7 +774,7 @@ impl Coordinator {
         // lead-in is recomputed from the real start when the capture begins.
         if self.ending.is_some() {
             if self.deferred_begin.is_some() {
-                self.drop_activity();
+                self.drop_activity(&draft.flavor);
                 return;
             }
             self.deferred_begin = Some(DeferredBegin {
@@ -803,15 +813,17 @@ impl Coordinator {
             }
             Err(error) => {
                 self.push_recorder_problem(&error);
-                self.drop_activity();
+                self.drop_activity(&draft.flavor);
             }
         }
     }
 
-    /// Forget the map run in progress without recording anything.
-    fn drop_activity(&mut self) {
-        if let Some(source) = self.poe2.as_mut() {
-            source.drop_run(now_unix_ms());
+    /// Forget `flavor`'s map run in progress without recording anything.
+    fn drop_activity(&mut self, flavor: &GameFlavor) {
+        for source in &mut self.sources {
+            if source.flavor() == flavor {
+                source.drop_run(now_unix_ms());
+            }
         }
     }
 
@@ -847,7 +859,7 @@ impl Coordinator {
         if active.mode != RecordingMode::Automatic || active.stop_at_ms.is_some() {
             return;
         }
-        let Some((seen_wall_ms, seen_log_ms)) = self.last_event.get(&GameFlavor::Poe2).copied()
+        let Some((seen_wall_ms, seen_log_ms)) = self.last_event.get(&active.draft.flavor).copied()
         else {
             return;
         };
@@ -866,11 +878,11 @@ impl Coordinator {
     /// End the map run at `at_ms`; a run already out of the map ends when
     /// the player left it.
     fn force_end_poe2(&mut self, at_ms: i64) {
-        let actions = self
-            .poe2
-            .as_mut()
-            .map(|source| source.force_end(at_ms))
-            .unwrap_or_default();
+        let actions: Vec<Poe2Action> = self
+            .sources
+            .iter_mut()
+            .flat_map(|source| source.force_end(at_ms))
+            .collect();
         for action in actions {
             self.apply_poe2(action);
         }

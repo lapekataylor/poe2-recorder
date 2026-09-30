@@ -43,14 +43,25 @@ impl fmt::Display for RecordingId {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GameFlavor {
+    /// Path of Exile 1, from its `Client.txt`.
+    Poe1,
     /// Path of Exile 2, from its `Client.txt`.
     Poe2,
+}
+
+impl GameFlavor {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Poe1 => "Path of Exile",
+            Self::Poe2 => "Path of Exile 2",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
-    /// A Path of Exile 2 waystone map, from entry until the player leaves.
+    /// A Path of Exile map, from entry until the player leaves.
     MapRuns,
     Manual,
     Clip,

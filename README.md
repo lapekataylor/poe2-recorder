@@ -1,7 +1,7 @@
 # PoE Recorder
 
-PoE Recorder records Path of Exile 2 on Linux. It follows the game's
-`Client.txt` log, starts recording when you enter a waystone map, stops when
+PoE Recorder records Path of Exile and Path of Exile 2 on Linux. It follows
+the game's `Client.txt` log, starts recording when you enter a map, stops when
 you leave it, and keeps a library of the videos with a metadata file beside
 each one. It is a native Rust and GTK4 application, built as a Flatpak for
 Wayland sessions.
@@ -9,7 +9,6 @@ Wayland sessions.
 It is a modified version of [Warcraft Recorder](https://github.com/aza547/wow-recorder),
 based on JohanWes's native Linux port,
 [wow-recorder-linuxwayland](https://github.com/JohanWes/wow-recorder-linuxwayland).
-Path of Exile 1 support is planned.
 
 ## Features
 
@@ -66,8 +65,8 @@ while; later builds reuse them. Start the app from your launcher as
 
 ## Setup
 
-1. Open Settings, turn on **Path of Exile 2 logs** and choose the game's
-   `logs` folder, for example
+1. Open Settings, turn on **Path of Exile logs** and/or **Path of Exile 2
+   logs** and choose each game's `logs` folder, for example
    `.../steamapps/common/Path of Exile 2/logs`.
 2. Choose a **recording folder**.
 3. When asked, choose the screen to capture.

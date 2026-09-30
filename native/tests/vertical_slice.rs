@@ -226,6 +226,7 @@ fn write_config(root: &Path, library: &Path, capture_root: &Path, log_dir: &Path
                 enabled: true,
                 log_dir: AuthorizedPath::authorized(log_dir),
             },
+            ..Default::default()
         },
         // Leaving a map ends the run on the next poll.
         activities: ActivitySettings {

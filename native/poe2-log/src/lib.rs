@@ -106,8 +106,9 @@ fn parse_message(message: &str) -> Option<LogEvent> {
     })
 }
 
-/// Classify an area id. Waystone maps start with `Map`, hideouts with
-/// `Hideout`, and act towns end in `_town` (`G1_town`).
+/// Classify an area id. Maps start with `Map` (Path of Exile 1 atlas maps
+/// with `MapWorlds`), hideouts with `Hideout`, and towns end in `_town`
+/// (`G1_town`, Path of Exile 1's `2_11_endgame_town`).
 pub fn area_kind(area_id: &str) -> AreaKind {
     if area_id.starts_with("Map") {
         AreaKind::Map
@@ -215,6 +216,9 @@ mod tests {
         assert_eq!(area_kind("P2_Town"), AreaKind::Town);
         assert_eq!(area_kind("G_Endgame_Town"), AreaKind::Town);
         assert_eq!(area_kind("MapUberBoss_FallenStar"), AreaKind::Map);
+        assert_eq!(area_kind("MapWorldsOrchard"), AreaKind::Map);
+        assert_eq!(area_kind("HideoutRuinedTemple"), AreaKind::Hideout);
+        assert_eq!(area_kind("2_11_endgame_town"), AreaKind::Town);
         assert_eq!(area_kind("Abyss_Depths1"), AreaKind::Other);
     }
 

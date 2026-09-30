@@ -223,9 +223,13 @@ fn complete(mut run: MapRun, ended_at_ms: i64) -> MapAction {
     MapAction::Complete(run)
 }
 
-/// A readable map name from its area id: `MapHiddenGrotto` → `Hidden Grotto`.
+/// A readable map name from its area id: `MapHiddenGrotto` → `Hidden Grotto`,
+/// and Path of Exile 1's `MapWorldsOrchard` → `Orchard`.
 pub fn map_display_name(area_id: &str) -> String {
-    let base = area_id.strip_prefix("Map").unwrap_or(area_id);
+    let base = area_id
+        .strip_prefix("MapWorlds")
+        .or_else(|| area_id.strip_prefix("Map"))
+        .unwrap_or(area_id);
     let base = if base.is_empty() { area_id } else { base };
     let mut name = String::with_capacity(base.len() + 4);
     let mut previous: Option<char> = None;
@@ -423,5 +427,7 @@ mod tests {
         assert_eq!(map_display_name("MapSwampTower2"), "Swamp Tower 2");
         assert_eq!(map_display_name("MapUber_Boss"), "Uber Boss");
         assert_eq!(map_display_name("Map"), "Map");
+        assert_eq!(map_display_name("MapWorldsOrchard"), "Orchard");
+        assert_eq!(map_display_name("MapWorldsLavaLake"), "Lava Lake");
     }
 }

@@ -17,7 +17,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::domain::{
-    CaptureResolution, Category, Codec, DeathMarkerVisibility, ReplayStorage, StorageLimit,
+    CaptureResolution, Category, Codec, DeathMarkerVisibility, GameFlavor, ReplayStorage,
+    StorageLimit,
 };
 
 pub const CONFIG_VERSION: u32 = 1;
@@ -72,14 +73,31 @@ pub struct FlavorConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct FlavorSettings {
+    /// Path of Exile 1: its `logs` folder, which holds `Client.txt`.
+    #[serde(default)]
+    pub poe1: FlavorConfig,
     /// Path of Exile 2: its `logs` folder, which holds `Client.txt`.
     #[serde(default)]
     pub poe2: FlavorConfig,
 }
 
+impl FlavorSettings {
+    /// Each game with its settings, in the order the app lists them.
+    pub fn iter(&self) -> [(GameFlavor, &FlavorConfig); 2] {
+        [
+            (GameFlavor::Poe1, &self.poe1),
+            (GameFlavor::Poe2, &self.poe2),
+        ]
+    }
+
+    pub fn any_enabled(&self) -> bool {
+        self.poe1.enabled || self.poe2.enabled
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivitySettings {
-    /// How long a Path of Exile 2 map run waits for the player to come back
+    /// How long a map run waits for the player to come back
     /// from the hideout before it ends.
     #[serde(default = "default_map_grace_seconds")]
     pub map_grace_seconds: u32,
@@ -282,13 +300,15 @@ impl Config {
             );
         }
 
-        if !self.flavors.poe2.enabled {
+        if !self.flavors.any_enabled() {
             problems.push(ValidationProblem::new(
                 "flavors",
-                "Turn on Path of Exile 2 and choose its logs directory.",
+                "Turn on Path of Exile or Path of Exile 2 and choose its logs directory.",
             ));
         }
-        validate_poe2(&mut problems, &self.flavors.poe2, self.validate_log_paths);
+        for (flavor, settings) in self.flavors.iter() {
+            validate_flavor(&mut problems, &flavor, settings, self.validate_log_paths);
+        }
 
         problems
     }
@@ -309,7 +329,9 @@ impl Config {
         ] {
             validate_path_state(&mut problems, field, path);
         }
-        validate_path_state(&mut problems, "flavors.poe2", &self.flavors.poe2.log_dir);
+        for (flavor, settings) in self.flavors.iter() {
+            validate_path_state(&mut problems, flavor_field(&flavor), &settings.log_dir);
+        }
         if self.activities.map_grace_seconds > 1_800 {
             problems.push(ValidationProblem::new(
                 "activities.map_grace_seconds",
@@ -437,27 +459,37 @@ fn validate_active_path(
     }
 }
 
-fn validate_poe2(
+/// The settings field a game's logs folder is reported under.
+pub fn flavor_field(flavor: &GameFlavor) -> &'static str {
+    match flavor {
+        GameFlavor::Poe1 => "flavors.poe1",
+        GameFlavor::Poe2 => "flavors.poe2",
+    }
+}
+
+fn validate_flavor(
     problems: &mut Vec<ValidationProblem>,
-    flavor: &FlavorConfig,
+    flavor: &GameFlavor,
+    settings: &FlavorConfig,
     validate_log_paths: bool,
 ) {
-    let field = "flavors.poe2";
-    if !flavor.enabled {
+    let field = flavor_field(flavor);
+    let game = flavor.name();
+    if !settings.enabled {
         return;
     }
-    if flavor.log_dir.path.as_os_str().is_empty() {
+    if settings.log_dir.path.as_os_str().is_empty() {
         problems.push(ValidationProblem::new(
             field,
-            "Choose the Path of Exile 2 logs directory.",
+            format!("Choose the {game} logs directory."),
         ));
-    } else if !flavor.log_dir.is_authorized() {
+    } else if !settings.log_dir.is_authorized() {
         problems.push(ValidationProblem::new(
             field,
-            "Choose the Path of Exile 2 logs directory again to authorize access.",
+            format!("Choose the {game} logs directory again to authorize access."),
         ));
     } else if validate_log_paths
-        && !flavor
+        && !settings
             .log_dir
             .path
             .file_name()
@@ -465,7 +497,7 @@ fn validate_poe2(
     {
         problems.push(ValidationProblem::new(
             field,
-            "Choose the logs directory inside the Path of Exile 2 install folder.",
+            format!("Choose the logs directory inside the {game} install folder."),
         ));
     }
 }
@@ -690,6 +722,33 @@ mod tests {
         assert!(!directory.join("config.json.tmp").exists());
 
         fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn either_game_alone_is_enough() {
+        let mut config = ready_config();
+        config.flavors.poe2.enabled = false;
+        config.flavors.poe1 = FlavorConfig {
+            enabled: true,
+            log_dir: AuthorizedPath::authorized("/games/Path of Exile/logs"),
+        };
+        assert_eq!(config.validate(), Vec::new());
+
+        config.flavors.poe1.log_dir = AuthorizedPath::authorized("/games/Path of Exile/Bundles");
+        let fields: Vec<_> = config
+            .validate()
+            .into_iter()
+            .map(|problem| problem.field)
+            .collect();
+        assert_eq!(fields, ["flavors.poe1"]);
+
+        config.flavors.poe1.enabled = false;
+        let fields: Vec<_> = config
+            .validate()
+            .into_iter()
+            .map(|problem| problem.field)
+            .collect();
+        assert_eq!(fields, ["flavors"]);
     }
 
     #[test]

@@ -30,7 +30,7 @@ use crate::storage::{CombinedMedia, Storage, now_unix_ms, sanitize_name, unique_
 /// GTK snapshot repeat work.
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Kept after the player left a Path of Exile 2 map: the portal and the
+/// Kept after the player left a Path of Exile map: the portal and the
 /// start of the loading screen, plus slack for whole-second log times.
 const MAP_TAIL_MS: u64 = 5_000;
 /// Cutting less than this is not worth another FFmpeg pass.

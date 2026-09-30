@@ -10,6 +10,12 @@ whose history follows the 0.1.0 entry below. Earlier history belongs to the
 upstream Electron project,
 [aza547/wow-recorder](https://github.com/aza547/wow-recorder).
 
+## Unreleased
+
+### Added
+- Path of Exile 1 map runs: turn on **Path of Exile logs** in Settings. Both
+  games can be watched at once.
+
 ## 0.1.0 - 2026-09-29
 
 ### Added

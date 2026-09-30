@@ -54,11 +54,13 @@ pub struct StatusView {
 
 /// Enabled flavour labels in config order, for the Ready detail line.
 pub fn enabled_flavors(config: &Config) -> Vec<&'static str> {
-    let mut flavors = Vec::new();
-    if config.flavors.poe2.enabled {
-        flavors.push("Path of Exile 2");
-    }
-    flavors
+    config
+        .flavors
+        .iter()
+        .into_iter()
+        .filter(|(_, settings)| settings.enabled)
+        .map(|(flavor, _)| flavor.name())
+        .collect()
 }
 
 pub fn view(snapshot: &AppSnapshot) -> StatusView {

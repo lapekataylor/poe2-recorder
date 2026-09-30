@@ -274,7 +274,21 @@ pub static INTERFACE_SWITCHES: [SwitchSpec; 5] = [
     },
 ];
 
-pub static PATHS: [PathSpec; 3] = [
+/// The first `LOG_PATHS` entries are the games' logs folders.
+const LOG_PATHS: usize = 2;
+
+pub static PATHS: [PathSpec; 4] = [
+    PathSpec {
+        field: "flavors.poe1",
+        title: "Path of Exile logs",
+        needs_write: false,
+        get: |config| &config.flavors.poe1.log_dir,
+        set: |config, path| config.flavors.poe1.log_dir = path,
+        enabled: Some(EnabledAccess {
+            get: |config| config.flavors.poe1.enabled,
+            set: |config, value| config.flavors.poe1.enabled = value,
+        }),
+    },
     PathSpec {
         field: "flavors.poe2",
         title: "Path of Exile 2 logs",
@@ -308,7 +322,7 @@ pub static PATHS: [PathSpec; 3] = [
 /// erasing their values.
 pub fn row_sensitive(field: &str, config: &Config) -> bool {
     match field {
-        "activities.map_grace_seconds" => config.flavors.poe2.enabled,
+        "activities.map_grace_seconds" => config.flavors.any_enabled(),
         "storage.buffer_dir" => config.storage.separate_buffer_dir,
         "manual.sound" => config.manual.enabled,
         "capture.audio_input" => config.capture.audio_input.is_some(),
@@ -577,11 +591,11 @@ impl Settings {
         // --- Game ----------------------------------------------------------
         let activities_page = adw::PreferencesPage::new();
         let logs_group = adw::PreferencesGroup::new();
-        logs_group.set_title("Game log");
+        logs_group.set_title("Game logs");
         logs_group.set_description(Some(
-            "Turn on Path of Exile 2 and choose the logs folder inside its install folder.",
+            "Turn on the games you play and choose the logs folder inside each install folder.",
         ));
-        for spec in PATHS.iter().take(1) {
+        for spec in PATHS.iter().take(LOG_PATHS) {
             let (row, select) = path_row(spec, &draft, &registry, &refresh, parent);
             gated.push(select.upcast());
             logs_group.add(&row);
@@ -631,10 +645,10 @@ impl Settings {
         let storage_page = adw::PreferencesPage::new();
         let storage_group = adw::PreferencesGroup::new();
         storage_group.set_title("Storage");
-        for (index, spec) in PATHS.iter().enumerate().skip(1) {
+        for (index, spec) in PATHS.iter().enumerate().skip(LOG_PATHS) {
             let (row, select) = path_row(spec, &draft, &registry, &refresh, parent);
             gated.push(select.upcast());
-            if index == 1 {
+            if index == LOG_PATHS {
                 storage_group.add(&row);
                 storage_group.add(&switch_row(
                     &INTERFACE_SWITCHES[0],

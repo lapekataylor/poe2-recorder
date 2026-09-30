@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Path of Exile 2 map runs as recording drafts.
+//! Path of Exile map runs as recording drafts.
 //!
-//! `Poe2Source` follows `<logs>/Client.txt` from its end, feeds each line to
+//! `Poe2Source` follows one game's `<logs>/Client.txt` from its end, feeds each line to
 //! the `poe2_log` map tracker, and turns the tracker's begin/complete
 //! decisions into `RecordingDraft`s for the coordinator to record, overrun
-//! and finalize.
+//! and finalize. Path of Exile 1 and 2 write the same log lines, so each
+//! enabled game gets its own source, tagged with its `GameFlavor`.
 //!
 //! Notes:
 //! - The game only appends to `Client.txt`; a shorter file or a different
@@ -51,6 +52,7 @@ pub enum Poe2Action {
 
 #[derive(Debug)]
 pub struct Poe2Source {
+    flavor: GameFlavor,
     path: PathBuf,
     offset: u64,
     /// Identifies the file `offset` belongs to.
@@ -69,6 +71,7 @@ impl Poe2Source {
     /// Follow `Client.txt` from its end, picking up a map the player is in
     /// right now. The file may not exist yet on a fresh install.
     pub fn open(
+        flavor: GameFlavor,
         log_dir: &Path,
         utc_offset_minutes: i32,
         grace_ms: i64,
@@ -83,6 +86,7 @@ impl Poe2Source {
         let path = log_dir.join(CLIENT_LOG);
         let metadata = std::fs::metadata(&path).ok();
         let mut source = Self {
+            flavor,
             path,
             offset: metadata.as_ref().map_or(0, std::fs::Metadata::len),
             inode: metadata.as_ref().map(MetadataExt::ino),
@@ -127,7 +131,7 @@ impl Poe2Source {
             Some((start, true)) => {
                 let id = RecordingId::new();
                 self.run_id = Some(id.clone());
-                self.resumed = Some(Box::new(begin_draft(id, start)));
+                self.resumed = Some(Box::new(begin_draft(id, &self.flavor, start)));
                 self.last_read_ms = Some(modified_ms);
             }
             // Recording the hideout now would show nothing of the map; the
@@ -137,6 +141,10 @@ impl Poe2Source {
             }
             None => {}
         }
+    }
+
+    pub fn flavor(&self) -> &GameFlavor {
+        &self.flavor
     }
 
     /// When the game last wrote to `Client.txt` while this source watched it.
@@ -232,11 +240,11 @@ impl Poe2Source {
             MapAction::Begin(start) => {
                 let id = RecordingId::new();
                 self.run_id = Some(id.clone());
-                Poe2Action::Begin(Box::new(begin_draft(id, &start)))
+                Poe2Action::Begin(Box::new(begin_draft(id, &self.flavor, &start)))
             }
             MapAction::Complete(run) => {
                 let id = self.run_id.take().unwrap_or_default();
-                Poe2Action::Complete(Box::new(finished_draft(id, &run)))
+                Poe2Action::Complete(Box::new(finished_draft(id, &self.flavor, &run)))
             }
         }
     }
@@ -277,11 +285,11 @@ fn details(start: &MapStart, run: Option<&MapRun>) -> ActivityDetails {
     }
 }
 
-fn begin_draft(id: RecordingId, start: &MapStart) -> RecordingDraft {
+fn begin_draft(id: RecordingId, flavor: &GameFlavor, start: &MapStart) -> RecordingDraft {
     RecordingDraft {
         id,
         category: Category::MapRuns,
-        flavor: GameFlavor::Poe2,
+        flavor: flavor.clone(),
         started_at_ms: start.started_at_ms,
         overrun_ms: 0,
         details: details(start, None),
@@ -294,7 +302,7 @@ fn begin_draft(id: RecordingId, start: &MapStart) -> RecordingDraft {
     }
 }
 
-fn finished_draft(id: RecordingId, run: &MapRun) -> RecordingDraft {
+fn finished_draft(id: RecordingId, flavor: &GameFlavor, run: &MapRun) -> RecordingDraft {
     let start_ms = run.start.started_at_ms;
     let offset = |at_ms: i64| (at_ms - start_ms).max(0) as u64;
     let mut timeline: Vec<TimelineItem> = run
@@ -330,7 +338,7 @@ fn finished_draft(id: RecordingId, run: &MapRun) -> RecordingDraft {
         outcome: Some(Outcome::Complete),
         ended_at_ms: Some(run.ended_at_ms),
         duration_ms: Some(run.duration_ms().max(0) as u64),
-        ..begin_draft(id, &run.start)
+        ..begin_draft(id, flavor, &run.start)
     }
 }
 
@@ -416,7 +424,8 @@ mod tests {
     fn a_map_run_becomes_a_begin_and_a_finished_draft() {
         let dir = TempDir::new("run");
         dir.append(&area("10:00:00", "MapOld", 5));
-        let mut source = Poe2Source::open(&dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
+        let mut source =
+            Poe2Source::open(GameFlavor::Poe2, &dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
 
         dir.append(&area("12:00:00", "MapHiddenGrotto", 7));
         dir.append(&line("12:01:00", ": TestExile has been slain."));
@@ -459,9 +468,39 @@ mod tests {
     }
 
     #[test]
+    fn a_path_of_exile_1_run_is_tagged_with_its_game() {
+        let dir = TempDir::new("poe1");
+        let mut source =
+            Poe2Source::open(GameFlavor::Poe1, &dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
+
+        dir.append(&area("21:46:23", "MapWorldsOrchard", 2_990_929_181));
+        dir.append(&line("21:51:21", ": FortunaRFtwo has been slain."));
+        dir.append(&area("21:51:22", "2_11_endgame_town", 1));
+        dir.append(&area("21:51:31", "MapWorldsOrchard", 2_990_929_181));
+        dir.append(&area("21:52:57", "2_11_endgame_town", 1));
+        dir.append(&area("21:53:08", "HideoutRuinedTemple", 1));
+        let actions = source.poll(at("21:53:08") + GRACE_MS).expect("poll");
+        let [Poe2Action::Begin(begin), Poe2Action::Complete(done)] = actions.as_slice() else {
+            panic!("expected a begin and a completion, got {actions:?}");
+        };
+        assert_eq!(begin.flavor, GameFlavor::Poe1);
+        assert_eq!(done.flavor, GameFlavor::Poe1);
+        assert_eq!(done.title.as_deref(), Some("Orchard"));
+        assert!(matches!(
+            done.details,
+            ActivityDetails::MapRun {
+                deaths: 1,
+                portal_trips: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn a_partly_written_line_waits_for_its_end() {
         let dir = TempDir::new("partial");
-        let mut source = Poe2Source::open(&dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
+        let mut source =
+            Poe2Source::open(GameFlavor::Poe2, &dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
         let text = area("12:00:00", "MapBluff", 7);
         let (first, rest) = text.split_at(30);
         dir.append(first);
@@ -477,7 +516,8 @@ mod tests {
     fn a_replaced_log_is_read_from_the_top() {
         let dir = TempDir::new("replaced");
         dir.append(&line("09:00:00", "a long line from an earlier session"));
-        let mut source = Poe2Source::open(&dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
+        let mut source =
+            Poe2Source::open(GameFlavor::Poe2, &dir.0, 0, GRACE_MS, LOG_LONG_QUIET).expect("open");
         // Longer than what was read, so only the new inode gives it away.
         let fresh = dir.0.join("Client.new");
         std::fs::write(&fresh, area("12:00:00", "MapBluff", 7)).expect("write");
@@ -496,7 +536,8 @@ mod tests {
         dir.append(&area("12:00:00", "MapHiddenGrotto", 7));
         dir.append(&line("12:03:00", ": TestExile has been slain."));
         dir.touch(at("12:03:00"));
-        let mut source = Poe2Source::open(&dir.0, 0, GRACE_MS, at("12:05:00")).expect("open");
+        let mut source =
+            Poe2Source::open(GameFlavor::Poe2, &dir.0, 0, GRACE_MS, at("12:05:00")).expect("open");
         assert!(source.is_running());
         assert_eq!(source.last_read_ms(), Some(at("12:03:00")));
 
@@ -526,7 +567,8 @@ mod tests {
         dir.append(&area("12:00:00", "MapBluff", 7));
         dir.append(&area("12:04:00", "HideoutShoreline", 1));
         dir.touch(at("12:04:00"));
-        let mut source = Poe2Source::open(&dir.0, 0, GRACE_MS, at("12:04:30")).expect("open");
+        let mut source =
+            Poe2Source::open(GameFlavor::Poe2, &dir.0, 0, GRACE_MS, at("12:04:30")).expect("open");
         assert!(!source.is_running());
         assert!(source.poll(at("12:04:30")).expect("poll").is_empty());
 
@@ -543,14 +585,29 @@ mod tests {
         let dir = TempDir::new("resume-quiet");
         dir.append(&area("12:00:00", "MapBluff", 7));
         dir.touch(at("12:00:00"));
-        let mut source =
-            Poe2Source::open(&dir.0, 0, GRACE_MS, at("12:00:00") + QUIET_LOG_MS + 1).expect("open");
+        let mut source = Poe2Source::open(
+            GameFlavor::Poe2,
+            &dir.0,
+            0,
+            GRACE_MS,
+            at("12:00:00") + QUIET_LOG_MS + 1,
+        )
+        .expect("open");
         assert!(!source.is_running());
         assert!(source.poll(at("12:30:00")).expect("poll").is_empty());
     }
 
     #[test]
     fn opening_a_missing_folder_fails() {
-        assert!(Poe2Source::open(Path::new("/nonexistent/poe2/logs"), 0, GRACE_MS, 0).is_err());
+        assert!(
+            Poe2Source::open(
+                GameFlavor::Poe2,
+                Path::new("/nonexistent/poe2/logs"),
+                0,
+                GRACE_MS,
+                0
+            )
+            .is_err()
+        );
     }
 }

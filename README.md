@@ -106,4 +106,6 @@ See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md).
 
 GPL-3.0-or-later. Capture uses
 [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/).
+The app icon's lettering is [Cinzel](https://github.com/NDISCOVER/Cinzel-Typeface)
+by Natanael Gama (SIL Open Font License 1.1), converted to outlines.
 PoE Recorder is not affiliated with or endorsed by Grinding Gear Games.

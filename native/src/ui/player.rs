@@ -519,11 +519,12 @@ impl Inner {
         }
         // New recording: stop, leave clip mode, and start at zero.
         self.position_seconds.set(0.0);
-        self.load_entry(&selection.id);
+        self.load_entry(&selection.id, selection.autoplay);
     }
 
-    /// Load one recording and play it from the start.
-    fn load_entry(self: &Rc<Self>, id: &RecordingId) {
+    /// Load one recording from the start, playing or paused on its first
+    /// frame.
+    fn load_entry(self: &Rc<Self>, id: &RecordingId, autoplay: bool) {
         let entries = self.entries.borrow();
         let Some(entry) = entries.iter().find(|entry| &entry.id == id) else {
             return;
@@ -581,10 +582,17 @@ impl Inner {
         backend.set_volume(self.volume_scale.value());
         backend.set_muted(self.muted.get());
         self.set_media_usable(true, is_clip);
-        backend.play();
-        self.playing.set(true);
-        self.play_button
-            .set_icon_name("media-playback-pause-symbolic");
+        if autoplay {
+            backend.play();
+        } else {
+            backend.pause();
+        }
+        self.playing.set(autoplay);
+        self.play_button.set_icon_name(if autoplay {
+            "media-playback-pause-symbolic"
+        } else {
+            "media-playback-start-symbolic"
+        });
         self.position_seconds.set(0.0);
         self.show_position(self.position_seconds.get());
         self.stack.set_visible_child_name("video");

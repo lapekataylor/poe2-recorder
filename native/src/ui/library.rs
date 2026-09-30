@@ -39,6 +39,9 @@ const MAX_VISIBLE_SUGGESTIONS: usize = 100;
 #[derive(Clone, Debug)]
 pub struct Selection {
     pub id: RecordingId,
+    /// Start playing at once. False when the library opened the newest
+    /// recording by itself rather than the user choosing it.
+    pub autoplay: bool,
 }
 
 /// Column families: the selected category maps to one family, which decides
@@ -199,6 +202,8 @@ struct State {
     suggestions_dirty: Cell<bool>,
     suggestions_active: Cell<bool>,
     rebuilding_store: Cell<bool>,
+    /// The library, not the user, is selecting the newest row.
+    selecting_default: Cell<bool>,
     category: RefCell<Option<Category>>,
     /// A protect/tag/delete is in flight; the bulk bar stays disabled until the
     /// authoritative snapshot arrives.
@@ -415,6 +420,7 @@ impl Library {
                 suggestions_dirty: Cell::new(true),
                 suggestions_active: Cell::new(false),
                 rebuilding_store: Cell::new(false),
+                selecting_default: Cell::new(false),
                 category: RefCell::new(None),
                 mutation_pending: Cell::new(false),
                 menu_target: RefCell::new(None),
@@ -710,7 +716,10 @@ impl Inner {
         // Load the sole selection into the player; multiselect does not load.
         if count == 1 {
             let row = &selected[0];
-            (self.on_select)(Some(Selection { id: row.id.clone() }));
+            (self.on_select)(Some(Selection {
+                id: row.id.clone(),
+                autoplay: !self.state.selecting_default.get(),
+            }));
         }
         self.update_bulk_bar(&selected);
     }
@@ -935,7 +944,8 @@ impl Inner {
                 wanted.add(index);
             }
         }
-        if wanted.is_empty() && visible > 0 {
+        let default_pick = wanted.is_empty() && visible > 0;
+        if default_pick {
             wanted.add(0);
         }
         if wanted.is_empty() {
@@ -943,8 +953,10 @@ impl Inner {
             // recording that just left the table.
             (self.on_select)(None);
         } else {
+            self.state.selecting_default.set(default_pick);
             self.selection
                 .set_selection(&wanted, &gtk4::Bitset::new_range(0, visible));
+            self.state.selecting_default.set(false);
         }
         self.update_bulk_bar(&self.selected_rows());
     }

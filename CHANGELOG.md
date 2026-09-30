@@ -21,10 +21,14 @@ upstream Electron project,
 - Map-run videos are cut five seconds after the player last left the map.
 - A map in progress when the app starts is recorded at once.
 - Map runs library section with map, area level and death columns.
+- Recording resolution setting: Native, 1440p, 1080p or 720p.
 
 ### Changed
 - Renamed to PoE Recorder (`io.github.lapekataylor.PoeRecorder`).
 - Test recordings simulate a short map run.
+- New app icon.
+- Settings recommend sharing the whole screen rather than the game window,
+  which stops recording when the game closes.
 
 ### Removed
 - World of Warcraft support: combat-log parsing, raid, dungeon, arena and

@@ -10,5 +10,7 @@ running version. Only `## <version>` headings and `- ` lines are parsed.
 - Mark deaths and time out of the map on the timeline
 - Cut the hideout tail off saved map runs
 - Pick up a map run already in progress when the app starts
+- Add a recording resolution setting
 - Rename the app to PoE Recorder
+- New app icon
 - Remove World of Warcraft support, the combat meter and the spell database
